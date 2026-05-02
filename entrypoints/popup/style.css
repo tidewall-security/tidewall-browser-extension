@@ -1,0 +1,289 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 410px;
+  min-height: 300px;
+  background: #1a1f2e;
+  color: #e6edf3;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#app {
+  padding: 16px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────────── */
+
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.logo {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #e5484d, #58a6ff);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 18px;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.logo.gray {
+  background: #6e7681;
+}
+
+.header-text h1 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: #8b949e;
+}
+
+/* ── Form ───────────────────────────────────────────────────────────────────── */
+
+.form-group {
+  margin-bottom: 10px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  color: #8b949e;
+  margin-bottom: 4px;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 8px 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.form-group input:focus {
+  border-color: #58a6ff;
+}
+
+.form-group input::placeholder {
+  color: #484f58;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────────── */
+
+.btn-primary {
+  width: 100%;
+  padding: 10px;
+  margin-top: 8px;
+  background: #e5484d;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary:hover {
+  background: #c93c40;
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  width: 100%;
+  padding: 8px;
+  margin-top: 12px;
+  background: transparent;
+  color: #8b949e;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.btn-secondary:hover {
+  border-color: #e5484d;
+  color: #e5484d;
+}
+
+/* ── Error ──────────────────────────────────────────────────────────────────── */
+
+.error {
+  background: rgba(229, 72, 77, 0.15);
+  border: 1px solid #e5484d;
+  color: #e5484d;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+/* ── Stats grid ─────────────────────────────────────────────────────────────── */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  background: #0d1117;
+  border-radius: 8px;
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.stat-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: #e6edf3;
+}
+
+.stat-label {
+  display: block;
+  font-size: 11px;
+  color: #8b949e;
+  margin-top: 2px;
+}
+
+/* ── Activity list ──────────────────────────────────────────────────────────── */
+
+.section {
+  margin-bottom: 12px;
+}
+
+.section h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.activity-list {
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.activity-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.activity-list li:nth-child(odd) {
+  background: rgba(13, 17, 23, 0.5);
+}
+
+.activity-empty {
+  color: #484f58;
+  font-style: italic;
+  justify-content: center;
+}
+
+.status-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-badge.blocked {
+  background: #e5484d;
+}
+
+.status-badge.transformed {
+  background: #d4a72c;
+}
+
+.status-badge.allowed {
+  background: #46954a;
+}
+
+.activity-site {
+  font-weight: 500;
+  color: #e6edf3;
+}
+
+.activity-status {
+  color: #8b949e;
+  margin-left: auto;
+  text-transform: capitalize;
+}
+
+.activity-time {
+  color: #484f58;
+  font-size: 11px;
+}
+
+/* ── Info box ───────────────────────────────────────────────────────────────── */
+
+.info-box {
+  background: #0d1117;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #8b949e;
+  line-height: 1.6;
+}
+
+.info-box strong {
+  color: #e6edf3;
+}
+
+/* ── Pending state ──────────────────────────────────────────────────────────── */
+
+.pending-message {
+  text-align: center;
+  padding: 20px 0 16px;
+}
+
+.pending-message p:first-child {
+  font-size: 15px;
+  font-weight: 600;
+  color: #d4a72c;
+}
+
+.pending-sub {
+  font-size: 12px;
+  color: #8b949e;
+  margin-top: 8px;
+}

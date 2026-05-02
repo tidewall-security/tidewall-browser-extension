@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=410, initial-scale=1.0">
+  <title>Tidewall</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="header-row">
+        <div id="logo" class="logo">T</div>
+        <div class="header-text">
+          <h1>Tidewall</h1>
+          <p id="status-subtitle" class="subtitle">Disconnected</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Register state -->
+    <div id="state-register" class="state" style="display:none;">
+      <form id="register-form">
+        <div class="form-group">
+          <label for="input-server">Server URL</label>
+          <input type="text" id="input-server" placeholder="https://tidewall.example.com" required>
+        </div>
+        <div class="form-group">
+          <label for="input-token">Registration Token</label>
+          <input type="password" id="input-token" placeholder="rt_..." required>
+        </div>
+        <div class="form-group">
+          <label for="input-name">Name</label>
+          <input type="text" id="input-name" placeholder="Jane Doe" required>
+        </div>
+        <div class="form-group">
+          <label for="input-email">Email</label>
+          <input type="email" id="input-email" placeholder="jane@example.com" required>
+        </div>
+        <div class="form-group">
+          <label for="input-device">Device Name</label>
+          <input type="text" id="input-device" placeholder="Work Laptop" required>
+        </div>
+        <div id="error-display" class="error" style="display:none;"></div>
+        <button type="submit" class="btn-primary">Register</button>
+      </form>
+    </div>
+
+    <!-- Pending state -->
+    <div id="state-pending" class="state" style="display:none;">
+      <div class="pending-message">
+        <p>Your device is pending approval.</p>
+        <p class="pending-sub">An administrator needs to activate this device before you can use Tidewall.</p>
+      </div>
+      <div id="pending-info" class="info-box"></div>
+      <button id="btn-disconnect-pending" class="btn-secondary">Disconnect</button>
+    </div>
+
+    <!-- Connected state -->
+    <div id="state-connected" class="state" style="display:none;">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-value" id="stat-scans">0</span>
+          <span class="stat-label">Scans</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-blocks">0</span>
+          <span class="stat-label">Blocked</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-transforms">0</span>
+          <span class="stat-label">Redacted</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Recent Activity</h3>
+        <ul id="activity-list" class="activity-list">
+          <li class="activity-empty">No activity yet</li>
+        </ul>
+      </div>
+
+      <div id="connected-info" class="info-box"></div>
+      <button id="btn-disconnect-connected" class="btn-secondary">Disconnect</button>
+    </div>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
