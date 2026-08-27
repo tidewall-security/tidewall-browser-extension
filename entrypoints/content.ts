@@ -176,8 +176,16 @@ export default defineContentScript({
           }
 
           case "notify": {
-            const { kind, summary } = detail as { kind: "blocked"; summary: string };
+            const { kind, summary } = detail as {
+              kind: "blocked" | "transformed";
+              summary: string;
+            };
             showNotification(kind, summary);
+            // Counted here, not on the verdict: the page world only sends
+            // this once a rewrite has been applied AND verified.
+            if (kind === "transformed") {
+              sendMessage("redactionApplied", { site: alias });
+            }
             respond({ ok: true });
             return;
           }

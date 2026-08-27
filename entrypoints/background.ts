@@ -248,6 +248,15 @@ export default defineBackground(() => {
 
   // ── trackSite ───────────────────────────────────────────────────────────
 
+  onMessage("redactionApplied", async () => {
+    // ACCOUNTING FOLLOWS THE ACT. The guard's verdict says a redaction was
+    // OFFERED; this says one was applied and proven, which is the only thing
+    // worth counting as a transform.
+    const transforms = ((await store.transformCount.getValue()) ?? 0) + 1;
+    await store.transformCount.setValue(transforms);
+    updateBadge("yellow");
+  });
+
   onMessage("trackSite", async ({ data }) => {
     const { site, url } = data;
     const fp = (await store.fingerprint.getValue()) ?? "";

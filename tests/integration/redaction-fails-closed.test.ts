@@ -13,27 +13,26 @@ import type { PromptScanResult } from "../../lib/types";
  */
 const clean: PromptScanResult = { blocked: false, transformed: false, summary: "" };
 
-describe("a transform verdict that cannot be applied", () => {
-  it("blocks rather than sending the original", () => {
+describe("a transform verdict", () => {
+  it("asks for a rewrite rather than being applied on trust", () => {
+    // Until proof existed this blocked outright. It now carries the guard's
+    // text to PageGuard, which applies it and must PROVE it worked before
+    // anything is sent — see proof-of-redaction.test.ts. A transform that
+    // cannot be proven still blocks; the guarantee moved, it did not weaken.
     const verdict = decideRequest({
       ...clean,
       transformed: true,
       transformedMessages: ["[redacted]"],
     });
-    expect(verdict.action).toBe("blocked");
+    expect(verdict.action).toBe("rewrite");
+    expect(verdict.action === "rewrite" && verdict.redacted).toEqual(["[redacted]"]);
   });
 
-  it("says why, so the user is not told a redaction happened", () => {
-    const verdict = decideRequest({ ...clean, transformed: true, transformedMessages: ["x"] });
-    expect(verdict.action === "blocked" && verdict.summary).toBe(CANNOT_REWRITE);
-  });
-
-  it("blocks even when the guard returns no replacement text at all", () => {
-    // `transformed` with an empty vector previously fell through to `pass`,
-    // because the old branch required `transformedMessages?.length`.
-    expect(decideRequest({ ...clean, transformed: true }).action).toBe("blocked");
-    expect(decideRequest({ ...clean, transformed: true, transformedMessages: [] }).action)
-      .toBe("blocked");
+  it("carries an empty vector rather than inventing one", () => {
+    // Cardinality is checked against what was extracted, so an empty vector
+    // must survive to be compared and rejected — not be padded here.
+    const verdict = decideRequest({ ...clean, transformed: true });
+    expect(verdict.action === "rewrite" && verdict.redacted).toEqual([]);
   });
 });
 

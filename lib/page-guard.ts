@@ -18,7 +18,7 @@
 
 import type { SiteHandler } from "../handlers/base";
 import type { PromptScanResult, SiteMode } from "./types";
-import { decideRequest, planExtraction, type RequestVerdict } from "./decide";
+import { decideRequest, planExtraction, CANNOT_REWRITE, type RequestVerdict } from "./decide";
 
 export interface CallMetadata {
   application: string;
@@ -32,10 +32,14 @@ export interface GuardBridge {
   /** Report an observed answer for logging. */
   report(text: string, meta: CallMetadata): void;
   /** Surface a decision to the user. */
-  notify(kind: "blocked", summary: string): void;
+  notify(kind: "blocked" | "transformed", summary: string): void;
 }
 
 /** Shown when the guard could not be reached or did not answer usefully. */
+/** Shown when the guard's replacement count does not match what was found. */
+export const CARDINALITY =
+  "Blocked: the guard's response did not match this request, so it was not sent.";
+
 export const NO_VERDICT =
   "Blocked: this prompt could not be checked, so it was not sent.";
 
@@ -87,7 +91,7 @@ export class PageGuard {
     }
     if (!h.disableFilter && !h.filterRequestUrl(url)) return { action: "pass" };
 
-    return this.run(planExtraction(h.classifyHttp(body), this.mode));
+    return this.run(planExtraction(h.classifyHttp(body), this.mode), body);
   }
 
   /** A WebSocket frame. */
@@ -95,10 +99,13 @@ export class PageGuard {
     const h = this.handler;
     if (!h.captureWebSocket && !h.captureWebSocketV2) return { action: "pass" };
 
-    return this.run(planExtraction(h.classifyWs(frame), this.mode));
+    return this.run(planExtraction(h.classifyWs(frame), this.mode), frame);
   }
 
-  private async run(plan: ReturnType<typeof planExtraction>): Promise<RequestVerdict> {
+  private async run(
+    plan: ReturnType<typeof planExtraction>,
+    body: unknown,
+  ): Promise<RequestVerdict> {
     if (plan.act === "pass") return { action: "pass" };
     if (plan.act === "block") return this.refuse(plan.summary);
 
@@ -117,7 +124,52 @@ export class PageGuard {
     if (!isVerdict(result)) return this.refuse(NO_VERDICT);
 
     const verdict = decideRequest(result);
-    return verdict.action === "blocked" ? this.refuse(verdict.summary) : verdict;
+    if (verdict.action === "blocked") return this.refuse(verdict.summary);
+    if (verdict.action === "rewrite") return this.prove(body, plan.prompts, verdict.redacted, result.summary);
+    return verdict;
+  }
+
+  /**
+   * Apply the guard's redaction, then prove it was applied.
+   *
+   * Re-extract from the REWRITTEN body and require the result to EQUAL the
+   * replacement vector. Not "the original is absent" — an adapter that writes
+   * `""` satisfies absence while deleting the prompt, and re-extraction then
+   * returns nothing at all because extractors filter falsy values.
+   *
+   * Run immediately before the send, so the page cannot mutate a shared
+   * FormData or byte array between the check and the use.
+   */
+  private async prove(
+    body: unknown,
+    extracted: string[],
+    redacted: string[],
+    summary: string,
+  ): Promise<RequestVerdict> {
+    if (redacted.length !== extracted.length) return this.refuse(CARDINALITY);
+
+    let rewritten: unknown;
+    try {
+      rewritten = await this.handler.promptHttpOutput(body, redacted);
+    } catch {
+      return this.refuse(CANNOT_REWRITE);
+    }
+    if (rewritten === undefined || rewritten === null) return this.refuse(CANNOT_REWRITE);
+
+    const after = this.handler.classifyHttp(rewritten);
+    if (after.kind !== "prompt" && after.kind !== "unsupportedPrompt") {
+      return this.refuse(CANNOT_REWRITE);
+    }
+    const found = after.prompts;
+    if (found.length !== redacted.length || found.some((v, i) => v !== redacted[i])) {
+      return this.refuse(CANNOT_REWRITE);
+    }
+
+    // Only NOW is it true that a redaction happened, so only now is it
+    // announced and counted. Announcing on the verdict alone is what told
+    // users their prompt had been redacted when it had not.
+    this.bridge.notify("transformed", summary);
+    return { action: "transformed", body: rewritten };
   }
 
   private refuse(summary: string): RequestVerdict {

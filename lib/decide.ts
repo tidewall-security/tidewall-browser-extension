@@ -16,7 +16,11 @@ export const CANNOT_REWRITE =
 
 export type RequestVerdict =
   | { action: "pass" }
-  | { action: "blocked"; summary: string };
+  | { action: "blocked"; summary: string }
+  /** The guard redacted something. Attempt the rewrite, then PROVE it. */
+  | { action: "rewrite"; redacted: string[] }
+  /** A rewrite that was applied and verified. `body` is what to send. */
+  | { action: "transformed"; body: unknown };
 
 /**
  * A `transformed` verdict BLOCKS.
@@ -37,7 +41,10 @@ export function decideRequest(result: PromptScanResult): RequestVerdict {
     return { action: "blocked", summary: result.summary };
   }
   if (result.transformed) {
-    return { action: "blocked", summary: CANNOT_REWRITE };
+    // Not "apply this" — "try to apply this, and block unless it can be
+    // shown to have worked". The proof lives in PageGuard, because it needs
+    // the real body.
+    return { action: "rewrite", redacted: result.transformedMessages ?? [] };
   }
   return { action: "pass" };
 }

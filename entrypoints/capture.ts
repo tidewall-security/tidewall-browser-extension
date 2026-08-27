@@ -153,7 +153,12 @@ export default defineUnlistedScript(() => {
       return new Response("Blocked by Tidewall", { status: 403, statusText: "Forbidden" });
     }
 
-    const resp = await originalFetch.call(window, input, init);
+    // A VERIFIED body is sent even when it is falsy. The previous truthiness
+    // check meant a proven-empty rewrite silently fell back to the original.
+    const outgoing =
+      verdict.action === "transformed" ? { ...init, body: verdict.body as BodyInit } : init;
+
+    const resp = await originalFetch.call(window, input, outgoing);
 
     // For streaming responses, read and forward events
     const contentType = resp.headers.get("content-type") ?? "";
@@ -219,6 +224,10 @@ export default defineUnlistedScript(() => {
         : Promise.resolve({ action: "pass" as const });
 
       inspected.then((response) => {
+        if (response.action === "transformed") {
+          originalSend.call(xhr, response.body as XMLHttpRequestBodyInit);
+          return;
+        }
         if (response.action === "blocked") {
           // Abort the XHR — don't send it
           xhr.dispatchEvent(new Event("error"));

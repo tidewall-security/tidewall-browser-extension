@@ -106,6 +106,8 @@ interface ProtocolMap {
 
   /** Content --> Background: discovery-mode site visit tracking. */
   trackSite: [TrackSiteData, void];
+  /** A redaction was applied AND verified. Accounting follows the act. */
+  redactionApplied: [{ site: string }, void];
 
   /** Popup --> Background: retrieve current scan/block/transform stats. */
   getStatus: [void, StatusResult];
