@@ -146,14 +146,22 @@ export default defineBackground(() => {
       const result = resp.result;
       const summary = resp.summary ?? "";
 
-      if (result.blocked) {
+      // ACCOUNTING FOLLOWS THE ACT, and a transform is not an act yet.
+      //
+      // A `transformed` verdict says the guard produced a redacted version; it
+      // does not say the extension applied one. This counted the transform,
+      // set a yellow badge and recorded "transformed" activity BEFORE the page
+      // attempted any rewrite -- so a rewrite that silently failed was still
+      // audited as a redaction, which is the same lie as the notification.
+      //
+      // Every transform currently blocks (see `decideRequest`), so it is
+      // counted as a block here. The transform counter comes back when a
+      // rewrite can be PROVEN applied, driven by an acknowledgement from the
+      // page world rather than by the verdict alone.
+      if (result.blocked || result.transformed) {
         const blocks = ((await store.blockCount.getValue()) ?? 0) + 1;
         await store.blockCount.setValue(blocks);
         updateBadge("red");
-      } else if (result.transformed) {
-        const transforms = ((await store.transformCount.getValue()) ?? 0) + 1;
-        await store.transformCount.setValue(transforms);
-        updateBadge("yellow");
       } else {
         updateBadge("green");
       }
@@ -167,7 +175,8 @@ export default defineBackground(() => {
       const activity = (await store.recentActivity.getValue()) ?? [];
       activity.unshift({
         site,
-        status: result.blocked ? "blocked" : result.transformed ? "transformed" : "allowed",
+        // "transformed" is not recorded until a rewrite is proven applied.
+        status: result.blocked || result.transformed ? "blocked" : "allowed",
         time: Date.now(),
       });
       await store.recentActivity.setValue(activity.slice(0, 10));

@@ -33,6 +33,7 @@ import { sendMessage } from "../lib/messaging";
 import { getHandler } from "../handlers/index";
 import { siteModes, deviceStatus } from "../lib/storage";
 import type { SiteMode, PromptScanResult } from "../lib/types";
+import { decideRequest, shouldGuard } from "../lib/decide";
 
 export default defineContentScript({
   matches: getAllUrlPatterns(),
@@ -183,47 +184,24 @@ export default defineContentScript({
               return;
             }
 
-            // Block/transform mode — send extracted prompts to guard.
-            // Falls back to raw body if handler returns empty.
-            const guardInput = prompts.length > 0
-              ? prompts
-              : (body ? [typeof body === "string" ? body : JSON.stringify(body)] : []);
-            const result = await handler.processRequestBody(guardInput);
-
-            if (result.blocked) {
-              showNotification("blocked", result.summary);
-              handler.runOnBlock();
-              respond({ action: "blocked" });
+            // NO RAW-BODY FALLBACK. Guarding the raw body when extraction
+            // returns nothing means a broad-filter site -- Poe and AI Studio
+            // intercept nearly everything by design -- can draw a transform
+            // verdict on ordinary traffic and be blocked for it. Empty
+            // extraction is treated as "not a prompt request" until typed
+            // outcomes can tell that apart from "a prompt I cannot read".
+            if (!shouldGuard(prompts)) {
+              respond({ action: "pass" });
               return;
             }
 
-            if (result.transformed && result.transformedMessages?.length) {
-              showNotification("transformed", result.summary);
-              // Rebuild body with transformed content
-              try {
-                const parsed =
-                  typeof body === "string" ? JSON.parse(body) : body;
-                if (parsed && typeof parsed === "object" && "messages" in parsed) {
-                  const newBody = {
-                    ...parsed,
-                    messages: (parsed as { messages: Array<{ role: string; content: string }> }).messages.map(
-                      (m: { role: string; content: string }, i: number) => ({
-                        ...m,
-                        content: result.transformedMessages![i] ?? m.content,
-                      })
-                    ),
-                  };
-                  respond({
-                    action: "transformed",
-                    transformedBody: JSON.stringify(newBody),
-                  });
-                  return;
-                }
-              } catch {
-                // Can't parse body, pass through
-              }
+            const result = await handler.processRequestBody(prompts);
+            const verdict = decideRequest(result);
 
-              respond({ action: "pass" });
+            if (verdict.action === "blocked") {
+              showNotification("blocked", verdict.summary);
+              handler.runOnBlock();
+              respond({ action: "blocked" });
               return;
             }
 
@@ -255,9 +233,10 @@ export default defineContentScript({
               ? xhrPrompts
               : (xhrBody ? [typeof xhrBody === "string" ? xhrBody : JSON.stringify(xhrBody)] : []);
             const xhrResult = await handler.processRequestBody(xhrGuardInput);
+            const xhrVerdict = decideRequest(xhrResult);
 
-            if (xhrResult.blocked) {
-              showNotification("blocked", xhrResult.summary);
+            if (xhrVerdict.action === "blocked") {
+              showNotification("blocked", xhrVerdict.summary);
               handler.runOnBlock();
               respond({ action: "blocked" });
               return;
@@ -285,9 +264,10 @@ export default defineContentScript({
               ? wsPrompts
               : (detail.data ? [detail.data] : []);
             const wsResult = await handler.processRequestBody(wsGuardInput);
+            const wsVerdict = decideRequest(wsResult);
 
-            if (wsResult.blocked) {
-              showNotification("blocked", wsResult.summary);
+            if (wsVerdict.action === "blocked") {
+              showNotification("blocked", wsVerdict.summary);
               handler.runOnBlock();
               respond({ action: "blocked" });
               return;

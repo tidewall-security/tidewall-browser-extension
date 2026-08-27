@@ -1,7 +1,7 @@
 {
   "name": "@tidewall-security/browser-extension",
   "version": "0.1.0",
-  "description": "Tidewall browser extension — monitor, redact, and block prompts to AI chat sites",
+  "description": "Tidewall browser extension \u2014 monitor, redact, and block prompts to AI chat sites",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -15,6 +15,7 @@
   },
   "scripts": {
     "dev": "wxt",
+    "prepare": "wxt prepare",
     "dev:firefox": "wxt --browser firefox",
     "build": "wxt build",
     "build:firefox": "wxt build --browser firefox",
