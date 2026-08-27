@@ -32,3 +32,39 @@ jobs:
 
       - name: Build (Firefox)
         run: npm run build:firefox
+
+  browser:
+    # The tests that unit tests structurally cannot reach: a service worker
+    # that fails to start, a capture script that never injects, a page-world
+    # script that throws before patching anything. All of those pass every
+    # vitest assertion in this repo.
+    name: Browser (MV3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Chromium
+        # The `chromium` channel, not the bundled Chrome-for-Testing build:
+        # that one never registers an MV3 service worker.
+        run: npx playwright install chromium --with-deps
+
+      - name: Build
+        run: npm run build
+
+      - name: Browser tests
+        run: xvfb-run --auto-servernum npm run e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7

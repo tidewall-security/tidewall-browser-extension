@@ -22,12 +22,15 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip --browser firefox",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium --with-deps"
   },
   "devDependencies": {
     "wxt": "^0.20.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0"
+    "vitest": "^2.0.0",
+    "@playwright/test": "^1.49.0"
   },
   "dependencies": {
     "@webext-core/messaging": "^1.4.0"
