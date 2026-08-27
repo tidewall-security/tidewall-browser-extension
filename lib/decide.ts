@@ -7,26 +7,12 @@
  * WebSocket silently did not.
  */
 
-import type { PromptScanResult } from "./types";
+import type { PromptScanResult, ExtractionOutcome, SiteMode } from "./types";
 
 /** Shown when the guard redacted something the extension cannot write back. */
 export const CANNOT_REWRITE =
   "Blocked: this prompt contained content that had to be removed, and this site's " +
   "request format cannot be safely rewritten.";
-
-/**
- * Whether an extraction result is worth asking the guard about.
- *
- * Empty extraction used to fall back to guarding the RAW BODY. Poe and AI
- * Studio intercept nearly every request by design, so an ordinary unrelated
- * call could draw a transform verdict and — once transforms block — be
- * blocked for it. Empty means "not a prompt request" here; telling that apart
- * from "a prompt request I cannot read" needs request identity, which is what
- * the typed outcomes add next.
- */
-export function shouldGuard(prompts: string[]): boolean {
-  return prompts.length > 0;
-}
 
 export type RequestVerdict =
   | { action: "pass" }
@@ -54,4 +40,37 @@ export function decideRequest(result: PromptScanResult): RequestVerdict {
     return { action: "blocked", summary: CANNOT_REWRITE };
   }
   return { action: "pass" };
+}
+
+export type ExtractionPlan =
+  | { act: "pass" }
+  | { act: "guard"; prompts: string[] }
+  | { act: "block"; summary: string };
+
+/** Shown when a request is known to be a prompt but none could be read. */
+export const CANNOT_INSPECT =
+  "Blocked: this looks like a prompt submission, but its contents could not be " +
+  "read, so it could not be checked.";
+
+/**
+ * What to do with an extraction outcome, before the guard is involved.
+ *
+ * The mode gate comes first and wins over everything, including
+ * `uninspectablePrompt`: `discover`, `log` and `disabled` promise not to
+ * affect the user, and that promise is not conditional on what was extracted.
+ */
+export function planExtraction(outcome: ExtractionOutcome, mode: SiteMode): ExtractionPlan {
+  if (mode !== "block") return { act: "pass" };
+
+  switch (outcome.kind) {
+    case "notPrompt":
+      return { act: "pass" };
+    case "prompt":
+    case "unsupportedPrompt":
+      // Both are guarded. They diverge only once a rewrite can be proven
+      // applied: today every transform blocks either way.
+      return { act: "guard", prompts: outcome.prompts };
+    case "uninspectablePrompt":
+      return { act: "block", summary: CANNOT_INSPECT };
+  }
 }

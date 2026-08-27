@@ -33,7 +33,7 @@ import { sendMessage } from "../lib/messaging";
 import { getHandler } from "../handlers/index";
 import { siteModes, deviceStatus } from "../lib/storage";
 import type { SiteMode, PromptScanResult } from "../lib/types";
-import { decideRequest, shouldGuard } from "../lib/decide";
+import { decideRequest, planExtraction } from "../lib/decide";
 
 export default defineContentScript({
   matches: getAllUrlPatterns(),
@@ -175,27 +175,20 @@ export default defineContentScript({
               return;
             }
 
-            // Extract prompt text and metadata from the request body
-            const prompts: string[] = handler.promptHttpInput(body) || [];
+            const plan = planExtraction(handler.classifyHttp(body), mode);
 
-            // If mode is discover or log, just pass through
-            if (mode === "discover" || mode === "log") {
+            if (plan.act === "pass") {
               respond({ action: "pass" });
               return;
             }
-
-            // NO RAW-BODY FALLBACK. Guarding the raw body when extraction
-            // returns nothing means a broad-filter site -- Poe and AI Studio
-            // intercept nearly everything by design -- can draw a transform
-            // verdict on ordinary traffic and be blocked for it. Empty
-            // extraction is treated as "not a prompt request" until typed
-            // outcomes can tell that apart from "a prompt I cannot read".
-            if (!shouldGuard(prompts)) {
-              respond({ action: "pass" });
+            if (plan.act === "block") {
+              showNotification("blocked", plan.summary);
+              handler.runOnBlock();
+              respond({ action: "blocked" });
               return;
             }
 
-            const result = await handler.processRequestBody(prompts);
+            const result = await handler.processRequestBody(plan.prompts);
             const verdict = decideRequest(result);
 
             if (verdict.action === "blocked") {
@@ -220,19 +213,20 @@ export default defineContentScript({
               respond({ action: "pass" });
               return;
             }
+            const xhrPlan = planExtraction(handler.classifyHttp(xhrBody), mode);
 
-            const xhrPrompts: string[] = handler.promptHttpInput(xhrBody) || [];
-
-            if (mode === "discover" || mode === "log") {
+            if (xhrPlan.act === "pass") {
               respond({ action: "pass" });
               return;
             }
+            if (xhrPlan.act === "block") {
+              showNotification("blocked", xhrPlan.summary);
+              handler.runOnBlock();
+              respond({ action: "blocked" });
+              return;
+            }
 
-            // Block mode — send to guard
-            const xhrGuardInput = xhrPrompts.length > 0
-              ? xhrPrompts
-              : (xhrBody ? [typeof xhrBody === "string" ? xhrBody : JSON.stringify(xhrBody)] : []);
-            const xhrResult = await handler.processRequestBody(xhrGuardInput);
+            const xhrResult = await handler.processRequestBody(xhrPlan.prompts);
             const xhrVerdict = decideRequest(xhrResult);
 
             if (xhrVerdict.action === "blocked") {
@@ -252,18 +246,20 @@ export default defineContentScript({
               return;
             }
 
-            const wsPrompts: string[] = handler.promptWsInput(detail.data) || [];
+            const wsPlan = planExtraction(handler.classifyWs(detail.data), mode);
 
-            if (mode === "discover" || mode === "log") {
+            if (wsPlan.act === "pass") {
               respond({ action: "pass" });
               return;
             }
+            if (wsPlan.act === "block") {
+              showNotification("blocked", wsPlan.summary);
+              handler.runOnBlock();
+              respond({ action: "blocked" });
+              return;
+            }
 
-            // Block mode — send to guard
-            const wsGuardInput = wsPrompts.length > 0
-              ? wsPrompts
-              : (detail.data ? [detail.data] : []);
-            const wsResult = await handler.processRequestBody(wsGuardInput);
+            const wsResult = await handler.processRequestBody(wsPlan.prompts);
             const wsVerdict = decideRequest(wsResult);
 
             if (wsVerdict.action === "blocked") {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideRequest, shouldGuard, CANNOT_REWRITE } from "../../lib/decide";
+import { decideRequest, CANNOT_REWRITE } from "../../lib/decide";
 import type { PromptScanResult } from "../../lib/types";
 
 /**
@@ -51,18 +51,5 @@ describe("the other verdicts are unchanged", () => {
   it("prefers blocked over transformed when the guard says both", () => {
     const verdict = decideRequest({ ...clean, blocked: true, transformed: true, summary: "b" });
     expect(verdict.action === "blocked" && verdict.summary).toBe("b");
-  });
-});
-
-describe("empty extraction is not a prompt request", () => {
-  it("does not send the raw body to the guard", () => {
-    // The fallback guarded the raw body, so a broad-filter site's ordinary
-    // traffic could draw a transform verdict and be blocked for it.
-    expect(shouldGuard([])).toBe(false);
-  });
-
-  it("still guards anything actually extracted", () => {
-    expect(shouldGuard(["hello"])).toBe(true);
-    expect(shouldGuard(["", "x"])).toBe(true);
   });
 });
