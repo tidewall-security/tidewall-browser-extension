@@ -27,7 +27,7 @@
  * @module entrypoints/capture
  */
 
-import { PageGuard } from "../lib/page-guard";
+import { PageGuard, requestParts } from "../lib/page-guard";
 import { getHandler } from "../handlers/index";
 import type { SiteMode, PromptScanResult } from "../lib/types";
 
@@ -37,7 +37,7 @@ export default defineUnlistedScript(() => {
     try {
       return JSON.parse(
         (document.currentScript as HTMLScriptElement | null)?.dataset.tidewall ?? "{}",
-      ) as { alias?: string; mode?: SiteMode };
+      ) as { alias?: string; mode?: SiteMode; channel?: string };
     } catch {
       return {};
     }
@@ -130,24 +130,22 @@ export default defineUnlistedScript(() => {
     input: RequestInfo | URL,
     init?: RequestInit
   ): Promise<Response> {
-    const method = (init?.method ?? "GET").toUpperCase();
+    // `fetch(new Request(url, {method, body}))` carries method and body on the
+    // REQUEST, not on `init`. Reading only `init` classified those as bodyless
+    // GETs, so a POST-only handler skipped them and the prompt went out
+    // untouched — inspection bypassed entirely rather than failing closed.
+    const asRequest = input instanceof Request ? input : null;
+    const { url, method, body } = await requestParts(input, init);
     if (method !== "POST" && method !== "GET") {
       return originalFetch.call(window, input, init);
     }
-
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
 
     // THE REAL BODY, not `String(body)`. Flattening it here is what made
     // FormData, URLSearchParams, Blob and byte arrays unreadable — and
     // therefore unrewritable — for every adapter.
     if (!pageGuard) return originalFetch.call(window, input, init);
 
-    const verdict = await pageGuard.inspectHttp("fetch", url, method, init?.body);
+    const verdict = await pageGuard.inspectHttp("fetch", url, method, body);
 
     if (verdict.action === "blocked") {
       return new Response("Blocked by Tidewall", { status: 403, statusText: "Forbidden" });
@@ -155,6 +153,12 @@ export default defineUnlistedScript(() => {
 
     // A VERIFIED body is sent even when it is falsy. The previous truthiness
     // check meant a proven-empty rewrite silently fell back to the original.
+    if (verdict.action === "transformed" && asRequest) {
+      // Rebuild the Request so every other property survives the rewrite.
+      const rebuilt = new Request(asRequest, { body: verdict.body as BodyInit });
+      const rewrittenResp = await originalFetch.call(window, rebuilt, init);
+      return rewrittenResp;
+    }
     const outgoing =
       verdict.action === "transformed" ? { ...init, body: verdict.body as BodyInit } : init;
 

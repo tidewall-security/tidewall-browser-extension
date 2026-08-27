@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { PageGuard, type GuardBridge } from "../../lib/page-guard";
+import { PageGuard, requestParts, type GuardBridge } from "../../lib/page-guard";
 import { getHandler } from "../../handlers/index";
 import type { PromptScanResult } from "../../lib/types";
 
@@ -179,5 +179,29 @@ describe("capture flags stay per-transport", () => {
     await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
                             "POST", JSON.stringify({ message: "hi" }));
     expect(asked).toHaveLength(1);
+  });
+});
+
+describe("fetch(Request) is inspected like any other call", () => {
+  it("reads the method and body off the Request, not just init", async () => {
+    const req = new Request("https://grok.com/rest/app-chat/conversations/new", {
+      method: "POST",
+      body: JSON.stringify({ message: "my ssn is 123-45-6789" }),
+    });
+    const parts = await requestParts(req);
+    expect(parts.method).toBe("POST");
+    expect(parts.body).toContain("123-45-6789");
+  });
+
+  it("still prefers an explicit init over the Request's own values", async () => {
+    const req = new Request("https://x/api", { method: "POST", body: "from-request" });
+    const parts = await requestParts(req, { method: "GET", body: "from-init" });
+    expect(parts.method).toBe("GET");
+    expect(parts.body).toBe("from-init");
+  });
+
+  it("handles a plain URL string with no body", async () => {
+    const parts = await requestParts("https://x/api");
+    expect(parts).toEqual({ url: "https://x/api", method: "GET", body: undefined });
   });
 });

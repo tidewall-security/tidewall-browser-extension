@@ -196,3 +196,35 @@ export class PageGuard {
     if (text) this.bridge.report(text, this.meta());
   }
 }
+
+/**
+ * What a `fetch()` call is actually asking for.
+ *
+ * `fetch(new Request(url, {method, body}))` carries both on the REQUEST, not
+ * on `init`. Reading only `init` classified those as bodyless GETs, so a
+ * POST-only handler skipped them and the prompt left uninspected — a bypass
+ * rather than a fail-closed.
+ *
+ * Extracted so it can be tested: the wrapper itself is a closure over
+ * `window.fetch`.
+ */
+export async function requestParts(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<{ url: string; method: string; body: unknown }> {
+  const asRequest = input instanceof Request ? input : null;
+  const url =
+    typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const method = (init?.method ?? asRequest?.method ?? "GET").toUpperCase();
+
+  let body: unknown = init?.body;
+  if (body === undefined && asRequest) {
+    // A Request body is a stream and readable once, so clone before reading.
+    try {
+      body = await asRequest.clone().text();
+    } catch {
+      body = undefined;
+    }
+  }
+  return { url, method, body };
+}
