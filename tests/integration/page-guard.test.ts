@@ -78,11 +78,23 @@ describe("verdicts", () => {
     expect(b.notices[0]).toBe("pii");
   });
 
-  it("BLOCKS a transform verdict — nothing here can prove a rewrite yet", async () => {
-    const { guard } = guardFor("grok", { ...CLEAN, transformed: true, transformedMessages: ["x"] });
+  it("applies a transform on a site that can prove the rewrite", async () => {
+    const { guard } = guardFor("grok",
+      { ...CLEAN, transformed: true, transformedMessages: ["[redacted]"] });
     const v = await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
                                       "POST", JSON.stringify({ message: "secret" }));
-    expect(v.action).toBe("blocked");
+    expect(v.action).toBe("transformed");
+    expect(JSON.stringify(v)).not.toContain("secret");
+  });
+
+  it("BLOCKS a transform on a site that cannot", async () => {
+    // notion has no write-back, so the proof fails and the call stops —
+    // without the site needing to declare anything.
+    const { guard } = guardFor("notion",
+      { ...CLEAN, transformed: true, transformedMessages: ["[redacted]"] });
+    const v = await guard.inspectHttp("fetch", "https://www.notion.so/api/v3/getAssistantReply",
+                                      "POST", JSON.stringify({ prompt: "secret" }));
+    expect(v.action).not.toBe("transformed");
   });
 
   it("never asks the guard about a non-matching URL", async () => {

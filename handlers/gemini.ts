@@ -44,17 +44,20 @@ export class GeminiHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): unknown {
     const params = new URLSearchParams(body as string);
     const fReq = params.get("f.req");
     if (fReq) {
       const outer = JSON.parse(fReq);
       const inner = JSON.parse(outer[1]);
-      inner[0][0] = "[redacted]";
+      inner[0][0] = redacted[0];
       outer[1] = JSON.stringify(inner);
       params.set("f.req", JSON.stringify(outer));
-      this.body = params.toString();
+      return params.toString();
     }
+    // No `f.req` to rewrite. Returning the original here would be a rewrite
+    // that changed nothing, so return nothing and let the proof block.
+    return undefined;
   }
 
   override logResponse(): void {

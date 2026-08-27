@@ -41,10 +41,10 @@ export class DeepSeekHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): string {
     const data = JSON.parse(body as string);
-    data.prompt = "[redacted]";
-    this.body = JSON.stringify(data);
+    data.prompt = redacted[0];
+    return JSON.stringify(data);
   }
 
   override logResponse(): void {
