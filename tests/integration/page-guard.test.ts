@@ -31,7 +31,7 @@ function guardFor(alias: string, result: PromptScanResult = CLEAN) {
 describe("the real body reaches the handler", () => {
   it("passes a string body through unflattened", async () => {
     const { guard, asked } = guardFor("grok");
-    await guard.inspectHttp("https://grok.com/rest/app-chat/conversations/new",
+    await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
                             "POST", JSON.stringify({ message: "hello" }));
     expect(asked[0]).toEqual(["hello"]);
   });
@@ -49,7 +49,7 @@ describe("the real body reaches the handler", () => {
     const b = bridge();
     const guard = new PageGuard(handler, "block", b.impl);
 
-    await guard.inspectHttp("https://grok.com/rest/app-chat/conversations/new", "POST", body);
+    await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new", "POST", body);
 
     expect(seen[0]).toBe(body);
     expect(typeof seen[0]).not.toBe("string");
@@ -59,7 +59,7 @@ describe("the real body reaches the handler", () => {
 describe("verdicts", () => {
   it("passes a clean verdict", async () => {
     const { guard } = guardFor("grok", CLEAN);
-    const v = await guard.inspectHttp("https://grok.com/rest/app-chat/conversations/new",
+    const v = await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
                                       "POST", JSON.stringify({ message: "hi" }));
     expect(v.action).toBe("pass");
   });
@@ -71,7 +71,7 @@ describe("verdicts", () => {
     const b = bridge({ ...CLEAN, blocked: true, summary: "pii" });
     const guard = new PageGuard(handler, "block", b.impl);
 
-    const v = await guard.inspectHttp("https://grok.com/rest/app-chat/conversations/new",
+    const v = await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
                                       "POST", JSON.stringify({ message: "hi" }));
     expect(v.action).toBe("blocked");
     expect(ran).toHaveBeenCalled();
@@ -80,21 +80,21 @@ describe("verdicts", () => {
 
   it("BLOCKS a transform verdict — nothing here can prove a rewrite yet", async () => {
     const { guard } = guardFor("grok", { ...CLEAN, transformed: true, transformedMessages: ["x"] });
-    const v = await guard.inspectHttp("https://grok.com/rest/app-chat/conversations/new",
+    const v = await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
                                       "POST", JSON.stringify({ message: "secret" }));
     expect(v.action).toBe("blocked");
   });
 
   it("never asks the guard about a non-matching URL", async () => {
     const { guard, asked } = guardFor("grok");
-    const v = await guard.inspectHttp("https://grok.com/static/app.js", "GET", null);
+    const v = await guard.inspectHttp("fetch", "https://grok.com/static/app.js", "GET", null);
     expect(v.action).toBe("pass");
     expect(asked).toHaveLength(0);
   });
 
   it("never asks the guard about ordinary traffic on a matching URL", async () => {
     const { guard, asked } = guardFor("grok");
-    const v = await guard.inspectHttp("https://grok.com/rest/app-chat/conversations/new",
+    const v = await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
                                       "POST", JSON.stringify({ unrelated: true }));
     expect(v.action).toBe("pass");
     expect(asked).toHaveLength(0);
@@ -108,5 +108,64 @@ describe("response observation stays here, in the page world", () => {
     const guard = new PageGuard(handler, "block", b.impl);
     guard.reportAnswer("the answer");
     expect(b.impl.report).toHaveBeenCalledWith("the answer", expect.anything());
+  });
+});
+
+/**
+ * Findings from the code review of tasks 1-3. Each of these shipped a leak
+ * or a behaviour change, and each is now held by a test.
+ */
+describe("the guard call fails closed", () => {
+  const badReplies: [string, PromptScanResult | undefined | object][] = [
+    ["a relay timeout, which resolves as a bare pass", undefined],
+    ["a reply with no verdict at all", {} as PromptScanResult],
+    ["a malformed verdict", { blocked: "no" } as unknown as PromptScanResult],
+    ["a null verdict", null as unknown as PromptScanResult],
+  ];
+
+  it.each(badReplies)("blocks on %s", async (_name, reply) => {
+    const handler = getHandler("grok", "block")!;
+    const guard = new PageGuard(handler, "block", {
+      ask: async () => reply as PromptScanResult,
+      report: vi.fn(),
+      notify: vi.fn(),
+    });
+    const v = await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
+                                      "POST", JSON.stringify({ message: "secret" }));
+    expect(v.action).toBe("blocked");
+  });
+
+  it("blocks when the bridge itself throws", async () => {
+    const handler = getHandler("grok", "block")!;
+    const guard = new PageGuard(handler, "block", {
+      ask: async () => { throw new Error("relay gone"); },
+      report: vi.fn(),
+      notify: vi.fn(),
+    });
+    const v = await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
+                                      "POST", JSON.stringify({ message: "secret" }));
+    expect(v.action).toBe("blocked");
+  });
+});
+
+describe("capture flags stay per-transport", () => {
+  it("does not let a fetch-only handler start guarding XHR", async () => {
+    const handler = getHandler("grok", "block")!;   // fetch: true, xmlhttp: false
+    expect(handler.captureFetch).toBe(true);
+    expect(handler.captureXmlHttp).toBe(false);
+    const b = bridge();
+    const guard = new PageGuard(handler, "block", b.impl);
+
+    const v = await guard.inspectHttp("xhr", "https://grok.com/rest/app-chat/conversations/new",
+                                      "POST", JSON.stringify({ message: "hi" }));
+    expect(v.action).toBe("pass");
+    expect(b.asked).toHaveLength(0);
+  });
+
+  it("still guards the transport the handler actually declares", async () => {
+    const { guard, asked } = guardFor("grok");
+    await guard.inspectHttp("fetch", "https://grok.com/rest/app-chat/conversations/new",
+                            "POST", JSON.stringify({ message: "hi" }));
+    expect(asked).toHaveLength(1);
   });
 });

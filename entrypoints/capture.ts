@@ -147,7 +147,7 @@ export default defineUnlistedScript(() => {
     // therefore unrewritable — for every adapter.
     if (!pageGuard) return originalFetch.call(window, input, init);
 
-    const verdict = await pageGuard.inspectHttp(url, method, init?.body);
+    const verdict = await pageGuard.inspectHttp("fetch", url, method, init?.body);
 
     if (verdict.action === "blocked") {
       return new Response("Blocked by Tidewall", { status: 403, statusText: "Forbidden" });
@@ -172,6 +172,7 @@ export default defineUnlistedScript(() => {
               break;
             }
             const chunk = decoder.decode(value, { stream: true });
+            pageGuard?.onStreamChunk(chunk);
             notifyContent("streamEvent", { url, chunk });
           }
         } catch {
@@ -214,7 +215,7 @@ export default defineUnlistedScript(() => {
       // arrays before any adapter could read them.
       const xhr = this;
       const inspected = pageGuard
-        ? pageGuard.inspectHttp(this._tidewallUrl, this._tidewallMethod ?? "GET", body)
+        ? pageGuard.inspectHttp("xhr", this._tidewallUrl, this._tidewallMethod ?? "GET", body)
         : Promise.resolve({ action: "pass" as const });
 
       inspected.then((response) => {
@@ -263,19 +264,34 @@ export default defineUnlistedScript(() => {
     const wsUrl = String(url);
 
     const originalWsSend = ws.send.bind(ws);
+    let wsQueue: Promise<void> = Promise.resolve();
     ws.send = function (data: string | ArrayBufferLike | Blob | ArrayBufferView) {
       // The REAL frame. Meta's adapter needs the Uint8Array, which
       // `String(data)` destroyed.
-      const inspectedWs = pageGuard
-        ? pageGuard.inspectWs(data)
-        : Promise.resolve({ action: "pass" as const });
-
-      inspectedWs.then((response) => {
-        if (response.action === "blocked") {
-          return; // blocked by the guard — never sent
-        }
+      if (!pageGuard) {
         originalWsSend(data);
-      });
+        return;
+      }
+
+      // NATIVE SEMANTICS FIRST. `send()` is synchronous: it throws
+      // InvalidStateError while CONNECTING, and deferring that behind an
+      // async verdict would swallow the error and deliver the frame later.
+      if (ws.readyState !== WebSocket.OPEN) {
+        originalWsSend(data);   // let the native call throw exactly as it would
+        return;
+      }
+
+      // ONE QUEUE PER SOCKET. Each send previously started an independent
+      // inspection and sent when its own promise resolved, so concurrent
+      // frames could resolve out of order and reverse a conversation.
+      wsQueue = wsQueue
+        .then(async () => {
+          const verdict = await pageGuard.inspectWs(data);
+          if (verdict.action === "blocked") return;
+          if (ws.readyState !== WebSocket.OPEN) return;  // closed while waiting
+          originalWsSend(data);
+        })
+        .catch(() => { /* a failed inspection must not stall the queue */ });
     };
 
     ws.addEventListener("message", (event: MessageEvent) => {
@@ -286,6 +302,7 @@ export default defineUnlistedScript(() => {
         dataStr = "";
       }
       pageGuard?.onWsMessage(event.data);
+      pageGuard?.onStreamChunk(event.data);
       notifyContent("wsMessage", { url: wsUrl, data: dataStr });
     });
 

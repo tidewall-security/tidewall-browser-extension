@@ -35,6 +35,20 @@ export interface GuardBridge {
   notify(kind: "blocked", summary: string): void;
 }
 
+/** Shown when the guard could not be reached or did not answer usefully. */
+export const NO_VERDICT =
+  "Blocked: this prompt could not be checked, so it was not sent.";
+
+/** A reply is only a verdict if it actually carries one. */
+function isVerdict(value: unknown): value is PromptScanResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as PromptScanResult).blocked === "boolean" &&
+    typeof (value as PromptScanResult).transformed === "boolean"
+  );
+}
+
 export class PageGuard {
   constructor(
     private readonly handler: SiteHandler,
@@ -42,14 +56,36 @@ export class PageGuard {
     private readonly bridge: GuardBridge,
   ) {
     this.handler.mode = mode;
+    // Response observation reaches the bridge through the handler's own
+    // output callback. Without this, `logResponse` scrapes an answer and
+    // `sendAiResponse` drops it: `_sendOutput` is unbound.
+    this.handler.bindMessaging(
+      async () => { throw new Error("guard calls go through inspectHttp/inspectWs"); },
+      (text: string) => { this.reportAnswer(text); },
+    );
   }
 
-  /** An HTTP request — fetch or XHR. `body` is the caller's real object. */
-  async inspectHttp(url: string, method: string, body: unknown): Promise<RequestVerdict> {
+  /**
+   * An HTTP request. `body` is the caller's real object.
+   *
+   * The transport is explicit because the flags are per-transport: a handler
+   * declaring `fetch` must not start guarding XHR just because both arrive
+   * here, which is what conflating them did.
+   */
+  async inspectHttp(
+    transport: "fetch" | "xhr",
+    url: string,
+    method: string,
+    body: unknown,
+  ): Promise<RequestVerdict> {
     const h = this.handler;
-    if (!h.captureFetch && !h.captureGet && !h.captureXmlHttp) return { action: "pass" };
+    if (transport === "xhr") {
+      if (!h.captureXmlHttp) return { action: "pass" };
+    } else {
+      if (!h.captureFetch && !h.captureGet) return { action: "pass" };
+      if (method === "GET" && !h.captureGet) return { action: "pass" };
+    }
     if (!h.disableFilter && !h.filterRequestUrl(url)) return { action: "pass" };
-    if (method === "GET" && !h.captureGet) return { action: "pass" };
 
     return this.run(planExtraction(h.classifyHttp(body), this.mode));
   }
@@ -66,7 +102,20 @@ export class PageGuard {
     if (plan.act === "pass") return { action: "pass" };
     if (plan.act === "block") return this.refuse(plan.summary);
 
-    const result = await this.bridge.ask(plan.prompts, this.meta());
+    // FAIL CLOSED on anything that is not a verdict.
+    //
+    // The relay resolves `{action:"pass"}` at its 30-second timeout, and a
+    // lost, dropped or version-skewed reply looks the same. Treating those as
+    // a clean scan sends the original prompt — a leak arriving as an accident
+    // rather than a decision.
+    let result: PromptScanResult;
+    try {
+      result = await this.bridge.ask(plan.prompts, this.meta());
+    } catch {
+      return this.refuse(NO_VERDICT);
+    }
+    if (!isVerdict(result)) return this.refuse(NO_VERDICT);
+
     const verdict = decideRequest(result);
     return verdict.action === "blocked" ? this.refuse(verdict.summary) : verdict;
   }
