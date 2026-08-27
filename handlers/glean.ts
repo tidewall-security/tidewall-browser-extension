@@ -41,10 +41,10 @@ export class GleanHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): unknown {
     const data = JSON.parse(body as string);
-    data.messages[0].fragments[0].text = "[redacted]";
-    this.body = JSON.stringify(data);
+    data.messages[0].fragments[0].text = redacted[0];
+    return JSON.stringify(data);
   }
 
   override metaHttpInput(body: unknown): void {

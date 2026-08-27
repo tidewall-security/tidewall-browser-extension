@@ -38,13 +38,13 @@ export class PerplexityHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): string {
     const data = JSON.parse(body as string);
-    data.query_str = "[redacted]";
+    data.query_str = redacted[0];
     if (data?.params?.dsl_query) {
-      data.params.dsl_query = "[redacted]";
+      data.params.dsl_query = redacted[0];
     }
-    this.body = JSON.stringify(data);
+    return JSON.stringify(data);
   }
 
   override logResponse(): void {

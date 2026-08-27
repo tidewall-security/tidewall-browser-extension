@@ -34,11 +34,11 @@ export class YouHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): string {
     const data = JSON.parse(body as string);
-    data.query = "[redacted]";
-    data.prompt = "[redacted]";
-    this.body = JSON.stringify(data);
+    data.query = redacted[0];
+    data.prompt = redacted[0];
+    return JSON.stringify(data);
   }
 
   override logResponse(): void {

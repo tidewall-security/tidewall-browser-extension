@@ -41,17 +41,17 @@ export class MetaHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): unknown {
     const formData = body as FormData;
     const variables = formData.get("variables") as string | null;
     if (variables) {
       const parsed = JSON.parse(variables);
       if (parsed?.message?.sensitive_string_value) {
-        parsed.message.sensitive_string_value = "[redacted]";
+        parsed.message.sensitive_string_value = redacted[0];
         formData.set("variables", JSON.stringify(parsed));
       }
     }
-    this.body = formData;
+    return formData;
   }
 
   override logResponse(): void {

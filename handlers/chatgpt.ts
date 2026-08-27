@@ -48,10 +48,10 @@ export class ChatGPTHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): unknown {
     const data = JSON.parse(body as string);
-    data.messages[0].content.parts = ["[redacted]"];
-    this.body = JSON.stringify(data);
+    data.messages[0].content.parts = [redacted[0]];
+    return JSON.stringify(data);
   }
 
   override logResponse(): void {

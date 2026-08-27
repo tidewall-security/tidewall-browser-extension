@@ -26,7 +26,7 @@
  * @module handlers/base
  */
 
-import type { SiteMode, HandlerOptions, PromptScanResult } from "../lib/types";
+import type { SiteMode, HandlerOptions, PromptScanResult, ExtractionOutcome } from "../lib/types";
 
 // ── DOM utility ──────────────────────────────────────────────────────────────
 
@@ -279,6 +279,44 @@ export abstract class SiteHandler {
    * @param _body - The raw request body (typically a JSON string or FormData)
    * @returns Array of extracted prompt strings, or empty array if none found
    */
+  /**
+   * Classify an HTTP body. THIS is what the pipeline calls.
+   *
+   * Wraps the legacy `promptHttpInput` so all 37 handlers keep working
+   * unmodified while the contract changes; a handler that needs
+   * `unsupportedPrompt` or `uninspectablePrompt` overrides this instead.
+   * The legacy method's return type deliberately does not change yet.
+   *
+   * Extractors are allowed to throw on malformed bodies — several do, and one
+   * test codifies it — so a throw is `notPrompt`, not an uncaught error.
+   */
+  classifyHttp(body: unknown): ExtractionOutcome {
+    let prompts: string[] = [];
+    try {
+      prompts = this.promptHttpInput(body) || [];
+    } catch {
+      return { kind: "notPrompt" };
+    }
+    return prompts.length > 0 ? { kind: "prompt", prompts } : { kind: "notPrompt" };
+  }
+
+  /**
+   * The same for WebSocket frames. Not optional even though WS redaction is
+   * out of scope: a WS prompt still needs guarding, and without this it keeps
+   * the `[]` ambiguity.
+   */
+  classifyWs(frame: unknown): ExtractionOutcome {
+    let prompts: string[] = [];
+    try {
+      prompts = this.promptWsInput(frame) || [];
+    } catch {
+      return { kind: "notPrompt" };
+    }
+    return prompts.length > 0
+      ? { kind: "unsupportedPrompt", prompts, reason: "websocket rewriting is not supported" }
+      : { kind: "notPrompt" };
+  }
+
   promptHttpInput(_body: unknown): string[] { return []; }
 
   /**
@@ -289,7 +327,21 @@ export abstract class SiteHandler {
    *
    * @param _body - The raw request body to redact
    */
-  promptHttpOutput(_body: unknown): void {}
+  /**
+   * Rewrite the request body with the guard's redacted text, and RETURN it.
+   *
+   * Returns whatever the transport accepts — a string, a `URL`, a `FormData`,
+   * a byte array — or a promise of one. The old signature took no replacement
+   * and returned nothing, which is why every implementation hardcoded
+   * `"[redacted]"` and none of them could be used.
+   *
+   * A site that does not override this cannot redact. That is not silent:
+   * the proof in `PageGuard` re-extracts and requires the guard's text to be
+   * present, so an unrewritten body blocks.
+   */
+  promptHttpOutput(_body: unknown, _redacted: string[]): unknown {
+    return undefined;
+  }
 
   /**
    * Extract user prompt text from an intercepted WebSocket message.

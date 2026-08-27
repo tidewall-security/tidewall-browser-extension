@@ -48,10 +48,10 @@ export class PoeHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): string {
     const data = JSON.parse(body as string);
-    data.variables.query = "[redacted]";
-    this.body = JSON.stringify(data);
+    data.variables.query = redacted[0];
+    return JSON.stringify(data);
   }
 
   override logResponse(): void {

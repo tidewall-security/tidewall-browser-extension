@@ -33,14 +33,19 @@ import { sendMessage } from "../lib/messaging";
 import { getHandler } from "../handlers/index";
 import { siteModes, deviceStatus } from "../lib/storage";
 import type { SiteMode, PromptScanResult } from "../lib/types";
+import { decideRequest, planExtraction } from "../lib/decide";
 
 export default defineContentScript({
   matches: getAllUrlPatterns(),
   runAt: "document_start",
 
   async main() {
-    const CAPTURE_EVENT = "tidewall-capture";
-    const CAPTURE_RESPONSE = "tidewall-capture-response";
+    // Namespaced per page load. NOT a security boundary — the page can read
+    // the attribute that carries it — but a constant event name is trivially
+    // scriptable, and this costs nothing.
+    const channel = crypto.randomUUID();
+    const CAPTURE_EVENT = `tidewall-capture-${channel}`;
+    const CAPTURE_RESPONSE = `tidewall-capture-response-${channel}`;
 
     // ── Determine current site ──────────────────────────────────────────────
 
@@ -90,38 +95,20 @@ export default defineContentScript({
       return;
     }
 
-    // ── Get handler ─────────────────────────────────────────────────────────
+    // ── Is this site supported? ─────────────────────────────────────────────
+    //
+    // Content no longer OWNS a handler — the page world builds its own, where
+    // the real request object lives. All this needs to know is whether there
+    // is one, so it can decide between injecting the capture script and just
+    // tracking the visit.
 
-    const handler = getHandler(alias, mode);
-
-    if (!handler) {
-      // In discover mode without a handler, just track the site
+    if (!getHandler(alias, mode)) {
       if (mode === "discover") {
         sendMessage("trackSite", { site: alias, url: window.location.href });
       }
       console.log("[Tidewall] No handler for", alias, "- tracking only");
       return;
     }
-
-    handler.mode = mode;
-
-    // ── Bind messaging ──────────────────────────────────────────────────────
-
-    handler.bindMessaging(
-      async (prompts: string[]): Promise<PromptScanResult> => {
-        const text = prompts.join("\n---\n");
-        const meta = handler.getMetaData();
-        return sendMessage("guardPrompt", {
-          text,
-          site: alias,
-          model: meta.modelName,
-          modelVersion: meta.modelVersion,
-        });
-      },
-      (text: string): void => {
-        sendMessage("guardOutput", { text, site: alias });
-      }
-    );
 
     // ── Discovery tracking ──────────────────────────────────────────────────
 
@@ -132,6 +119,11 @@ export default defineContentScript({
     const script = document.createElement("script");
     script.src = browser.runtime.getURL("/capture.js");
     script.type = "text/javascript";
+    // The page world builds its own handler, so it needs to know which site
+    // and which mode. A data attribute is read synchronously by
+    // `document.currentScript`, which avoids a handshake race with requests
+    // the page fires immediately.
+    script.dataset.tidewall = JSON.stringify({ alias, mode, channel });
     (document.documentElement || document.head || document.body).appendChild(
       script
     );
@@ -154,181 +146,61 @@ export default defineContentScript({
 
       try {
         switch (type) {
-          case "interceptFetch": {
-            if (!handler.captureFetch && !handler.captureGet) {
-              respond({ action: "pass" });
-              return;
-            }
+          // ── The page world decides; this relays ──────────────────────
+          //
+          // Inspection and (soon) rewriting happen in `capture.js`, because
+          // that is where the real request object lives. The only thing that
+          // needs extension APIs is the guard call itself, so it is the only
+          // thing that crosses. Nothing but strings crosses.
 
-            const { url, method, body } = detail;
-
-            // Skip non-matching URLs
-            if (!handler.disableFilter && !handler.filterRequestUrl(url)) {
-              respond({ action: "pass" });
-              return;
-            }
-
-            // Skip GET requests if not configured
-            if (method === "GET" && !handler.captureGet) {
-              respond({ action: "pass" });
-              return;
-            }
-
-            // Extract prompt text and metadata from the request body
-            const prompts: string[] = handler.promptHttpInput(body) || [];
-
-            // If mode is discover or log, just pass through
-            if (mode === "discover" || mode === "log") {
-              respond({ action: "pass" });
-              return;
-            }
-
-            // Block/transform mode — send extracted prompts to guard.
-            // Falls back to raw body if handler returns empty.
-            const guardInput = prompts.length > 0
-              ? prompts
-              : (body ? [typeof body === "string" ? body : JSON.stringify(body)] : []);
-            const result = await handler.processRequestBody(guardInput);
-
-            if (result.blocked) {
-              showNotification("blocked", result.summary);
-              handler.runOnBlock();
-              respond({ action: "blocked" });
-              return;
-            }
-
-            if (result.transformed && result.transformedMessages?.length) {
-              showNotification("transformed", result.summary);
-              // Rebuild body with transformed content
-              try {
-                const parsed =
-                  typeof body === "string" ? JSON.parse(body) : body;
-                if (parsed && typeof parsed === "object" && "messages" in parsed) {
-                  const newBody = {
-                    ...parsed,
-                    messages: (parsed as { messages: Array<{ role: string; content: string }> }).messages.map(
-                      (m: { role: string; content: string }, i: number) => ({
-                        ...m,
-                        content: result.transformedMessages![i] ?? m.content,
-                      })
-                    ),
-                  };
-                  respond({
-                    action: "transformed",
-                    transformedBody: JSON.stringify(newBody),
-                  });
-                  return;
-                }
-              } catch {
-                // Can't parse body, pass through
-              }
-
-              respond({ action: "pass" });
-              return;
-            }
-
-            respond({ action: "pass" });
-            break;
+          case "guardPrompt": {
+            const { prompts, meta } = detail as {
+              prompts: string[];
+              meta: { application: string; modelName: string; modelVersion: string };
+            };
+            const result = await sendMessage("guardPrompt", {
+              text: prompts.join("\n"),
+              site: alias,
+              model: meta?.modelName ?? "",
+              modelVersion: meta?.modelVersion ?? "",
+              url: window.location.href,
+            });
+            respond({ result });
+            return;
           }
 
-          case "interceptXhr": {
-            if (!handler.captureXmlHttp) {
-              respond({ action: "pass" });
-              return;
-            }
-
-            const { url: xhrUrl, body: xhrBody } = detail;
-            if (!handler.disableFilter && !handler.filterRequestUrl(xhrUrl)) {
-              respond({ action: "pass" });
-              return;
-            }
-
-            const xhrPrompts: string[] = handler.promptHttpInput(xhrBody) || [];
-
-            if (mode === "discover" || mode === "log") {
-              respond({ action: "pass" });
-              return;
-            }
-
-            // Block mode — send to guard
-            const xhrGuardInput = xhrPrompts.length > 0
-              ? xhrPrompts
-              : (xhrBody ? [typeof xhrBody === "string" ? xhrBody : JSON.stringify(xhrBody)] : []);
-            const xhrResult = await handler.processRequestBody(xhrGuardInput);
-
-            if (xhrResult.blocked) {
-              showNotification("blocked", xhrResult.summary);
-              handler.runOnBlock();
-              respond({ action: "blocked" });
-              return;
-            }
-
-            respond({ action: "pass" });
-            break;
+          case "reportAnswer": {
+            const { text, meta } = detail as {
+              text: string;
+              meta: { modelName: string; modelVersion: string };
+            };
+            sendMessage("guardOutput", { text, site: alias });
+            respond({ ok: true });
+            return;
           }
 
-          case "interceptWs": {
-            if (!handler.captureWebSocket && !handler.captureWebSocketV2) {
-              respond({ action: "pass" });
-              return;
+          case "notify": {
+            const { kind, summary } = detail as {
+              kind: "blocked" | "transformed";
+              summary: string;
+            };
+            showNotification(kind, summary);
+            // Counted here, not on the verdict: the page world only sends
+            // this once a rewrite has been applied AND verified.
+            if (kind === "transformed") {
+              sendMessage("redactionApplied", { site: alias });
             }
-
-            const wsPrompts: string[] = handler.promptWsInput(detail.data) || [];
-
-            if (mode === "discover" || mode === "log") {
-              respond({ action: "pass" });
-              return;
-            }
-
-            // Block mode — send to guard
-            const wsGuardInput = wsPrompts.length > 0
-              ? wsPrompts
-              : (detail.data ? [detail.data] : []);
-            const wsResult = await handler.processRequestBody(wsGuardInput);
-
-            if (wsResult.blocked) {
-              showNotification("blocked", wsResult.summary);
-              handler.runOnBlock();
-              respond({ action: "blocked" });
-              return;
-            }
-
-            respond({ action: "pass" });
-            break;
+            respond({ ok: true });
+            return;
           }
 
-          case "wsMessage": {
-            if (handler.monitorWebSocket) {
-              handler.monitorWsResponse(detail.data);
-            }
-            handler.processEvent(detail.data);
-            break;
-          }
-
-          case "streamEvent": {
-            handler.processEvent(detail.chunk);
-            break;
-          }
-
-          case "streamDone": {
-            if (handler.logOnStreamEnd) {
-              handler.logResponse(detail.url);
-            }
-            break;
-          }
-
-          case "xhrResponse": {
-            if (handler.filterInfoRespUrl(detail.url)) {
-              handler.metaHttpInput(detail.body);
-            }
-            break;
-          }
         }
       } catch (err) {
         console.error("[Tidewall] Error handling capture event:", type, err);
-        if (type === "interceptFetch") {
-          respond({ action: "pass" });
-        }
+        // FAIL CLOSED: the page world is waiting on this reply, and a
+        // silent drop resolves as `pass` at its timeout.
+        respond({ result: { blocked: true, transformed: false,
+                            summary: "Blocked: the guard could not be reached." } });
       }
     });
 

@@ -53,14 +53,14 @@ export class MistralHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): unknown {
     const data = JSON.parse(body as string);
     if (data?.messageInput?.length && data.messageInput[0]?.type === "text") {
-      data.messageInput[0].text = "[redacted]";
+      data.messageInput[0].text = redacted[0];
     } else if (data?.[0]?.json?.content?.[0]?.type === "text") {
-      data[0].json.content[0].text = "[redacted]";
+      data[0].json.content[0].text = redacted[0];
     }
-    this.body = JSON.stringify(data);
+    return JSON.stringify(data);
   }
 
   override runOnBlock(): void {

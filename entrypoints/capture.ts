@@ -27,9 +27,24 @@
  * @module entrypoints/capture
  */
 
+import { PageGuard, requestParts } from "../lib/page-guard";
+import { getHandler } from "../handlers/index";
+import type { SiteMode, PromptScanResult } from "../lib/types";
+
 export default defineUnlistedScript(() => {
-  const OUTGOING = "tidewall-capture";
-  const RESPONSE = "tidewall-capture-response";
+  // Configuration handed over by the content script on the script tag.
+  const config = (() => {
+    try {
+      return JSON.parse(
+        (document.currentScript as HTMLScriptElement | null)?.dataset.tidewall ?? "{}",
+      ) as { alias?: string; mode?: SiteMode; channel?: string };
+    } catch {
+      return {};
+    }
+  })();
+
+  const OUTGOING = `tidewall-capture-${config.channel ?? ""}`;
+  const RESPONSE = `tidewall-capture-response-${config.channel ?? ""}`;
 
   let messageId = 0;
 
@@ -93,58 +108,61 @@ export default defineUnlistedScript(() => {
 
   // ── Fetch interception ───────────────────────────────────────────────────
 
+  // THE GUARD LIVES HERE, in the page world, because this is where the real
+  // request object still exists. Only the guard call crosses the bridge.
+  const handler = config.alias ? getHandler(config.alias, config.mode ?? "block") : null;
+  const pageGuard = handler
+    ? new PageGuard(handler, config.mode ?? "block", {
+        ask: async (prompts, meta) => {
+          const reply = await sendToContent("guardPrompt", { prompts, meta });
+          return (reply.result as PromptScanResult) ?? {
+            blocked: false, transformed: false, summary: "",
+          };
+        },
+        report: (text, meta) => { void sendToContent("reportAnswer", { text, meta }); },
+        notify: (kind, summary) => { void sendToContent("notify", { kind, summary }); },
+      })
+    : null;
+
   const originalFetch = window.fetch;
 
   window.fetch = async function patchedFetch(
     input: RequestInfo | URL,
     init?: RequestInit
   ): Promise<Response> {
-    const method = (init?.method ?? "GET").toUpperCase();
+    // `fetch(new Request(url, {method, body}))` carries method and body on the
+    // REQUEST, not on `init`. Reading only `init` classified those as bodyless
+    // GETs, so a POST-only handler skipped them and the prompt went out
+    // untouched — inspection bypassed entirely rather than failing closed.
+    const asRequest = input instanceof Request ? input : null;
+    const { url, method, body } = await requestParts(input, init);
     if (method !== "POST" && method !== "GET") {
       return originalFetch.call(window, input, init);
     }
 
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
+    // THE REAL BODY, not `String(body)`. Flattening it here is what made
+    // FormData, URLSearchParams, Blob and byte arrays unreadable — and
+    // therefore unrewritable — for every adapter.
+    if (!pageGuard) return originalFetch.call(window, input, init);
 
-    let bodyStr: string | null = null;
-    if (init?.body) {
-      try {
-        bodyStr =
-          typeof init.body === "string"
-            ? init.body
-            : init.body instanceof ArrayBuffer
-              ? new TextDecoder().decode(init.body)
-              : init.body instanceof Blob
-                ? await init.body.text()
-                : String(init.body);
-      } catch {
-        bodyStr = null;
-      }
-    }
+    const verdict = await pageGuard.inspectHttp("fetch", url, method, body);
 
-    const response = await sendToContent("interceptFetch", {
-      url,
-      method,
-      body: bodyStr,
-    });
-
-    // Blocked — return fake 403
-    if (response.action === "blocked") {
+    if (verdict.action === "blocked") {
       return new Response("Blocked by Tidewall", { status: 403, statusText: "Forbidden" });
     }
 
-    // Transformed — replace request body
-    const actualInit = { ...init };
-    if (response.action === "transformed" && response.transformedBody) {
-      actualInit.body = response.transformedBody as string;
+    // A VERIFIED body is sent even when it is falsy. The previous truthiness
+    // check meant a proven-empty rewrite silently fell back to the original.
+    if (verdict.action === "transformed" && asRequest) {
+      // Rebuild the Request so every other property survives the rewrite.
+      const rebuilt = new Request(asRequest, { body: verdict.body as BodyInit });
+      const rewrittenResp = await originalFetch.call(window, rebuilt, init);
+      return rewrittenResp;
     }
+    const outgoing =
+      verdict.action === "transformed" ? { ...init, body: verdict.body as BodyInit } : init;
 
-    const resp = await originalFetch.call(window, input, actualInit);
+    const resp = await originalFetch.call(window, input, outgoing);
 
     // For streaming responses, read and forward events
     const contentType = resp.headers.get("content-type") ?? "";
@@ -158,14 +176,17 @@ export default defineUnlistedScript(() => {
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
-              notifyContent("streamDone", { url });
+              pageGuard?.onStreamEnd(url);
+            notifyContent("streamDone", { url });
               break;
             }
             const chunk = decoder.decode(value, { stream: true });
+            pageGuard?.onStreamChunk(chunk);
             notifyContent("streamEvent", { url, chunk });
           }
         } catch {
-          notifyContent("streamDone", { url });
+          pageGuard?.onStreamEnd(url);
+            notifyContent("streamDone", { url });
         }
       })();
     }
@@ -199,20 +220,18 @@ export default defineUnlistedScript(() => {
     body?: Document | XMLHttpRequestBodyInit | null
   ) {
     if (this._tidewallUrl) {
-      let bodyStr: string | null = null;
-      try {
-        bodyStr = typeof body === "string" ? body : body ? String(body) : null;
-      } catch {
-        bodyStr = null;
-      }
-
-      // Use sendToContent (request/response) so the guard can block
+      // The REAL body — `String(body)` here destroyed FormData, Blob and byte
+      // arrays before any adapter could read them.
       const xhr = this;
-      sendToContent("interceptXhr", {
-        url: this._tidewallUrl,
-        method: this._tidewallMethod ?? "GET",
-        body: bodyStr,
-      }).then((response) => {
+      const inspected = pageGuard
+        ? pageGuard.inspectHttp("xhr", this._tidewallUrl, this._tidewallMethod ?? "GET", body)
+        : Promise.resolve({ action: "pass" as const });
+
+      inspected.then((response) => {
+        if (response.action === "transformed") {
+          originalSend.call(xhr, response.body as XMLHttpRequestBodyInit);
+          return;
+        }
         if (response.action === "blocked") {
           // Abort the XHR — don't send it
           xhr.dispatchEvent(new Event("error"));
@@ -223,6 +242,7 @@ export default defineUnlistedScript(() => {
         xhr.onreadystatechange = function (ev: Event) {
           if (xhr.readyState === 4) {
             try {
+              pageGuard?.onInfoResponse(xhr.responseText);
               notifyContent("xhrResponse", {
                 url: xhr._tidewallUrl ?? "",
                 status: xhr.status,
@@ -257,23 +277,34 @@ export default defineUnlistedScript(() => {
     const wsUrl = String(url);
 
     const originalWsSend = ws.send.bind(ws);
+    let wsQueue: Promise<void> = Promise.resolve();
     ws.send = function (data: string | ArrayBufferLike | Blob | ArrayBufferView) {
-      let dataStr: string;
-      try {
-        dataStr = typeof data === "string" ? data : String(data);
-      } catch {
-        dataStr = "";
+      // The REAL frame. Meta's adapter needs the Uint8Array, which
+      // `String(data)` destroyed.
+      if (!pageGuard) {
+        originalWsSend(data);
+        return;
       }
 
-      // Use sendToContent so the guard can block WebSocket messages
-      sendToContent("interceptWs", { url: wsUrl, data: dataStr }).then(
-        (response) => {
-          if (response.action === "blocked") {
-            return; // Don't send — message blocked by guard
-          }
+      // NATIVE SEMANTICS FIRST. `send()` is synchronous: it throws
+      // InvalidStateError while CONNECTING, and deferring that behind an
+      // async verdict would swallow the error and deliver the frame later.
+      if (ws.readyState !== WebSocket.OPEN) {
+        originalWsSend(data);   // let the native call throw exactly as it would
+        return;
+      }
+
+      // ONE QUEUE PER SOCKET. Each send previously started an independent
+      // inspection and sent when its own promise resolved, so concurrent
+      // frames could resolve out of order and reverse a conversation.
+      wsQueue = wsQueue
+        .then(async () => {
+          const verdict = await pageGuard.inspectWs(data);
+          if (verdict.action === "blocked") return;
+          if (ws.readyState !== WebSocket.OPEN) return;  // closed while waiting
           originalWsSend(data);
-        }
-      );
+        })
+        .catch(() => { /* a failed inspection must not stall the queue */ });
     };
 
     ws.addEventListener("message", (event: MessageEvent) => {
@@ -283,6 +314,8 @@ export default defineUnlistedScript(() => {
       } catch {
         dataStr = "";
       }
+      pageGuard?.onWsMessage(event.data);
+      pageGuard?.onStreamChunk(event.data);
       notifyContent("wsMessage", { url: wsUrl, data: dataStr });
     });
 

@@ -57,15 +57,18 @@ export class AIStudioHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): unknown {
     const data = JSON.parse(body as string);
     try {
       const arr = data[1];
-      arr[arr.length - 1][0][0][1] = "[redacted]";
+      arr[arr.length - 1][0][0][1] = redacted[0];
     } catch {
-      // structure mismatch — skip
+      // Structure mismatch. Returning the body here would be a rewrite that
+      // changed nothing, which the proof exists to reject — so return
+      // nothing and let the call block.
+      return undefined;
     }
-    this.body = JSON.stringify(data);
+    return JSON.stringify(data);
   }
 
   override logResponse(): void {

@@ -41,10 +41,10 @@ export class GrokHandler extends SiteHandler {
     return [];
   }
 
-  override promptHttpOutput(body: unknown): void {
+  override promptHttpOutput(body: unknown, redacted: string[]): string {
     const data = JSON.parse(body as string);
-    data.message = "[redacted]";
-    this.body = JSON.stringify(data);
+    data.message = redacted[0];
+    return JSON.stringify(data);
   }
 
   override logResponse(): void {

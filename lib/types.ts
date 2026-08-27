@@ -213,3 +213,25 @@ export interface HandlerOptions {
   /** URL patterns for informational request endpoints. */
   infoReqUrls?: RegExp[];
 }
+
+/**
+ * What extraction concluded about a request.
+ *
+ * `string[]` conflated "ordinary site traffic" with "a prompt request I
+ * cannot read", and those need opposite handling — the first must pass, the
+ * second must block. Blanket-blocking on empty bricks broad-filter sites
+ * like Poe and AI Studio, which intercept nearly everything by design;
+ * blanket passing is the leak.
+ */
+export type ExtractionOutcome =
+  /** Not a prompt submission. Pass it through untouched. */
+  | { kind: "notPrompt" }
+  /** A prompt, extracted and rewritable. */
+  | { kind: "prompt"; prompts: string[]; rewritePlan?: unknown }
+  /** A prompt this adapter can read but cannot rewrite. Guard it; a clean
+   *  verdict passes, a transform blocks. */
+  | { kind: "unsupportedPrompt"; prompts: string[]; reason: string }
+  /** Request identity says this IS a prompt submission, but no text could be
+   *  extracted — so there is nothing to obtain a verdict from, and waiting
+   *  for a transform verdict would never block. Blocks immediately. */
+  | { kind: "uninspectablePrompt"; reason: string };
