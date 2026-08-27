@@ -27,7 +27,22 @@
  * @module entrypoints/capture
  */
 
+import { PageGuard } from "../lib/page-guard";
+import { getHandler } from "../handlers/index";
+import type { SiteMode, PromptScanResult } from "../lib/types";
+
 export default defineUnlistedScript(() => {
+  // Configuration handed over by the content script on the script tag.
+  const config = (() => {
+    try {
+      return JSON.parse(
+        (document.currentScript as HTMLScriptElement | null)?.dataset.tidewall ?? "{}",
+      ) as { alias?: string; mode?: SiteMode };
+    } catch {
+      return {};
+    }
+  })();
+
   const OUTGOING = "tidewall-capture";
   const RESPONSE = "tidewall-capture-response";
 
@@ -93,6 +108,22 @@ export default defineUnlistedScript(() => {
 
   // ── Fetch interception ───────────────────────────────────────────────────
 
+  // THE GUARD LIVES HERE, in the page world, because this is where the real
+  // request object still exists. Only the guard call crosses the bridge.
+  const handler = config.alias ? getHandler(config.alias, config.mode ?? "block") : null;
+  const pageGuard = handler
+    ? new PageGuard(handler, config.mode ?? "block", {
+        ask: async (prompts, meta) => {
+          const reply = await sendToContent("guardPrompt", { prompts, meta });
+          return (reply.result as PromptScanResult) ?? {
+            blocked: false, transformed: false, summary: "",
+          };
+        },
+        report: (text, meta) => { void sendToContent("reportAnswer", { text, meta }); },
+        notify: (kind, summary) => { void sendToContent("notify", { kind, summary }); },
+      })
+    : null;
+
   const originalFetch = window.fetch;
 
   window.fetch = async function patchedFetch(
@@ -111,40 +142,18 @@ export default defineUnlistedScript(() => {
           ? input.href
           : input.url;
 
-    let bodyStr: string | null = null;
-    if (init?.body) {
-      try {
-        bodyStr =
-          typeof init.body === "string"
-            ? init.body
-            : init.body instanceof ArrayBuffer
-              ? new TextDecoder().decode(init.body)
-              : init.body instanceof Blob
-                ? await init.body.text()
-                : String(init.body);
-      } catch {
-        bodyStr = null;
-      }
-    }
+    // THE REAL BODY, not `String(body)`. Flattening it here is what made
+    // FormData, URLSearchParams, Blob and byte arrays unreadable — and
+    // therefore unrewritable — for every adapter.
+    if (!pageGuard) return originalFetch.call(window, input, init);
 
-    const response = await sendToContent("interceptFetch", {
-      url,
-      method,
-      body: bodyStr,
-    });
+    const verdict = await pageGuard.inspectHttp(url, method, init?.body);
 
-    // Blocked — return fake 403
-    if (response.action === "blocked") {
+    if (verdict.action === "blocked") {
       return new Response("Blocked by Tidewall", { status: 403, statusText: "Forbidden" });
     }
 
-    // Transformed — replace request body
-    const actualInit = { ...init };
-    if (response.action === "transformed" && response.transformedBody) {
-      actualInit.body = response.transformedBody as string;
-    }
-
-    const resp = await originalFetch.call(window, input, actualInit);
+    const resp = await originalFetch.call(window, input, init);
 
     // For streaming responses, read and forward events
     const contentType = resp.headers.get("content-type") ?? "";
@@ -158,14 +167,16 @@ export default defineUnlistedScript(() => {
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
-              notifyContent("streamDone", { url });
+              pageGuard?.onStreamEnd(url);
+            notifyContent("streamDone", { url });
               break;
             }
             const chunk = decoder.decode(value, { stream: true });
             notifyContent("streamEvent", { url, chunk });
           }
         } catch {
-          notifyContent("streamDone", { url });
+          pageGuard?.onStreamEnd(url);
+            notifyContent("streamDone", { url });
         }
       })();
     }
@@ -199,20 +210,14 @@ export default defineUnlistedScript(() => {
     body?: Document | XMLHttpRequestBodyInit | null
   ) {
     if (this._tidewallUrl) {
-      let bodyStr: string | null = null;
-      try {
-        bodyStr = typeof body === "string" ? body : body ? String(body) : null;
-      } catch {
-        bodyStr = null;
-      }
-
-      // Use sendToContent (request/response) so the guard can block
+      // The REAL body — `String(body)` here destroyed FormData, Blob and byte
+      // arrays before any adapter could read them.
       const xhr = this;
-      sendToContent("interceptXhr", {
-        url: this._tidewallUrl,
-        method: this._tidewallMethod ?? "GET",
-        body: bodyStr,
-      }).then((response) => {
+      const inspected = pageGuard
+        ? pageGuard.inspectHttp(this._tidewallUrl, this._tidewallMethod ?? "GET", body)
+        : Promise.resolve({ action: "pass" as const });
+
+      inspected.then((response) => {
         if (response.action === "blocked") {
           // Abort the XHR — don't send it
           xhr.dispatchEvent(new Event("error"));
@@ -223,6 +228,7 @@ export default defineUnlistedScript(() => {
         xhr.onreadystatechange = function (ev: Event) {
           if (xhr.readyState === 4) {
             try {
+              pageGuard?.onInfoResponse(xhr.responseText);
               notifyContent("xhrResponse", {
                 url: xhr._tidewallUrl ?? "",
                 status: xhr.status,
@@ -258,22 +264,18 @@ export default defineUnlistedScript(() => {
 
     const originalWsSend = ws.send.bind(ws);
     ws.send = function (data: string | ArrayBufferLike | Blob | ArrayBufferView) {
-      let dataStr: string;
-      try {
-        dataStr = typeof data === "string" ? data : String(data);
-      } catch {
-        dataStr = "";
-      }
+      // The REAL frame. Meta's adapter needs the Uint8Array, which
+      // `String(data)` destroyed.
+      const inspectedWs = pageGuard
+        ? pageGuard.inspectWs(data)
+        : Promise.resolve({ action: "pass" as const });
 
-      // Use sendToContent so the guard can block WebSocket messages
-      sendToContent("interceptWs", { url: wsUrl, data: dataStr }).then(
-        (response) => {
-          if (response.action === "blocked") {
-            return; // Don't send — message blocked by guard
-          }
-          originalWsSend(data);
+      inspectedWs.then((response) => {
+        if (response.action === "blocked") {
+          return; // blocked by the guard — never sent
         }
-      );
+        originalWsSend(data);
+      });
     };
 
     ws.addEventListener("message", (event: MessageEvent) => {
@@ -283,6 +285,7 @@ export default defineUnlistedScript(() => {
       } catch {
         dataStr = "";
       }
+      pageGuard?.onWsMessage(event.data);
       notifyContent("wsMessage", { url: wsUrl, data: dataStr });
     });
 
