@@ -40,8 +40,12 @@ export default defineContentScript({
   runAt: "document_start",
 
   async main() {
-    const CAPTURE_EVENT = "tidewall-capture";
-    const CAPTURE_RESPONSE = "tidewall-capture-response";
+    // Namespaced per page load. NOT a security boundary — the page can read
+    // the attribute that carries it — but a constant event name is trivially
+    // scriptable, and this costs nothing.
+    const channel = crypto.randomUUID();
+    const CAPTURE_EVENT = `tidewall-capture-${channel}`;
+    const CAPTURE_RESPONSE = `tidewall-capture-response-${channel}`;
 
     // ── Determine current site ──────────────────────────────────────────────
 
@@ -119,7 +123,7 @@ export default defineContentScript({
     // and which mode. A data attribute is read synchronously by
     // `document.currentScript`, which avoids a handshake race with requests
     // the page fires immediately.
-    script.dataset.tidewall = JSON.stringify({ alias, mode });
+    script.dataset.tidewall = JSON.stringify({ alias, mode, channel });
     (document.documentElement || document.head || document.body).appendChild(
       script
     );

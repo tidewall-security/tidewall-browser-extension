@@ -43,8 +43,8 @@ export default defineUnlistedScript(() => {
     }
   })();
 
-  const OUTGOING = "tidewall-capture";
-  const RESPONSE = "tidewall-capture-response";
+  const OUTGOING = `tidewall-capture-${config.channel ?? ""}`;
+  const RESPONSE = `tidewall-capture-response-${config.channel ?? ""}`;
 
   let messageId = 0;
 

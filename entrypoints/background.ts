@@ -204,19 +204,23 @@ export default defineBackground(() => {
           await refreshToken();
           return await doGuardCall();
         } catch {
+          // FAIL CLOSED. `blocked: false` here reads to every caller as
+          // "the guard checked this and found nothing", which is the one
+          // thing it does not mean. An unreachable guard is not a clean scan.
           return {
-            blocked: false,
+            blocked: true,
             transformed: false,
-            summary: "Token refresh failed",
+            summary: "Blocked: could not authenticate to the guard.",
           };
         }
       }
 
       console.error("[Tidewall] guardPrompt error:", msg);
+      // FAIL CLOSED, for the same reason: an error is not a verdict.
       return {
-        blocked: false,
+        blocked: true,
         transformed: false,
-        summary: "Guard call failed",
+        summary: "Blocked: the guard could not be reached, so this prompt was not checked.",
       };
     }
   });
