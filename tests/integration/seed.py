@@ -8,8 +8,13 @@ import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 
-BASE = "http://localhost:8099"
-ADMIN = "ak_demo_bootstrap_key_000000000001"
+import os
+
+# Overridable so CI can use its own bootstrap key. Defaults match the local
+# instructions in this directory's README.
+BASE = os.environ.get("TIDEWALL_SERVER", "http://localhost:8099")
+ADMIN = os.environ.get("TIDEWALL_ADMIN_KEY", "ak_demo_bootstrap_key_000000000001")
+OUT = os.environ.get("TIDEWALL_RT_FILE", "/tmp/int-rt.txt")
 
 
 def call(method: str, path: str, body: dict | None = None):
@@ -26,6 +31,6 @@ token = call("POST", "/v1/registration-tokens", {
     "policy_id": policy["id"],
     "expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
 })
-with open("/tmp/int-rt.txt", "w") as fh:
+with open(OUT, "w") as fh:
     fh.write(token["token"])
-print(f"registration token written to /tmp/int-rt.txt ({token['token'][:12]}...)")
+print(f"registration token written to {OUT} ({token['token'][:12]}...)")
