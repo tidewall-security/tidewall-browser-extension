@@ -1,0 +1,133 @@
+{
+ "enrol_pending": {
+  "status": 201,
+  "body": {
+   "status": "Success",
+   "result": {
+    "device_id": "df10e20c-dfe5-4417-8d64-52c3af05f074",
+    "device_status": "pending",
+    "access_token": {
+     "token": "at_876910eb6d22dd1ddd5569c530791042",
+     "expires_in": 3600
+    },
+    "config": {
+     "sites": {
+      "chatgpt": "block",
+      "claude": "block",
+      "gemini": "block",
+      "copilot": "block",
+      "m365copilot": "block",
+      "perplexity": "block",
+      "deepseek": "block",
+      "grok": "block",
+      "meta": "block",
+      "mistral": "block",
+      "aistudio": "block",
+      "poe": "block",
+      "you": "block",
+      "glean": "block",
+      "salesforce": "block",
+      "character": "block",
+      "notion": "block",
+      "iask": "block",
+      "dalle": "block",
+      "openart": "block",
+      "copyai": "block",
+      "sigma": "block",
+      "joyland": "block",
+      "flowgpt": "block",
+      "pi": "block",
+      "phind": "block",
+      "sakura": "block",
+      "anonchatgpt": "block",
+      "chatgot": "block",
+      "gptonline": "block",
+      "askanai": "block",
+      "kuki": "block",
+      "hereforyou": "block",
+      "yodayo": "block",
+      "charstar": "block",
+      "deftgpt": "block",
+      "dopple": "block"
+     }
+    },
+    "refresh_token": {
+     "token": "dr_93073260e7691ecc9e497c4218add10f",
+     "expires_in": 2592000
+    },
+    "confirmation_code": "WJELS4Q3"
+   }
+  }
+ },
+ "refresh_ok": {
+  "status": 200,
+  "body": {
+   "status": "ok",
+   "result": {
+    "device_id": "df10e20c-dfe5-4417-8d64-52c3af05f074",
+    "device_status": "active",
+    "access_token": {
+     "token": "at_e5018ded05520f612e08a71ca27875a0",
+     "expires_in": 3600
+    },
+    "config": {
+     "sites": {
+      "chatgpt": "block",
+      "claude": "block",
+      "gemini": "block",
+      "copilot": "block",
+      "m365copilot": "block",
+      "perplexity": "block",
+      "deepseek": "block",
+      "grok": "block",
+      "meta": "block",
+      "mistral": "block",
+      "aistudio": "block",
+      "poe": "block",
+      "you": "block",
+      "glean": "block",
+      "salesforce": "block",
+      "character": "block",
+      "notion": "block",
+      "iask": "block",
+      "dalle": "block",
+      "openart": "block",
+      "copyai": "block",
+      "sigma": "block",
+      "joyland": "block",
+      "flowgpt": "block",
+      "pi": "block",
+      "phind": "block",
+      "sakura": "block",
+      "anonchatgpt": "block",
+      "chatgot": "block",
+      "gptonline": "block",
+      "askanai": "block",
+      "kuki": "block",
+      "hereforyou": "block",
+      "yodayo": "block",
+      "charstar": "block",
+      "deftgpt": "block",
+      "dopple": "block"
+     }
+    }
+   }
+  }
+ },
+ "refresh_revoked": {
+  "status": 403,
+  "body": {
+   "status": "device_revoked",
+   "reason": "device_revoked",
+   "result": null
+  }
+ },
+ "enrol_tombstoned": {
+  "status": 403,
+  "body": {
+   "status": "InstallationTombstoned",
+   "reason": "InstallationTombstoned",
+   "result": null
+  }
+ }
+}
