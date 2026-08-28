@@ -20,6 +20,8 @@
 
 import { storage } from "wxt/utils/storage";
 
+import type { Credentials, DeviceState } from "./types";
+
 // ── Server / authentication ───────────────────���──────────────────────────────
 
 /** Base URL of the Tidewall server (e.g., "https://tidewall.example.com"). */
@@ -27,22 +29,66 @@ export const serverUrl = storage.defineItem<string>("local:serverUrl", {
   defaultValue: "",
 });
 
-/** Long-lived refresh token (`rt_` prefix) obtained during registration. */
+/**
+ * REGISTRATION token (`rt_` prefix), supplied by an administrator.
+ *
+ * Not a refresh token, despite what this used to be called. It is accepted at
+ * `/v1/devices/enrol` and nowhere else. Retained after enrolment because a later
+ * re-enrolment needs it.
+ */
 export const rtToken = storage.defineItem<string>("local:rtToken", {
   defaultValue: "",
 });
 
-/** Short-lived access token (`at_` prefix) used for guard API calls. Refreshed every 60 minutes. */
-export const atToken = storage.defineItem<string>("local:atToken", {
-  defaultValue: "",
-});
+/**
+ * This installation's credentials, written and read as ONE value.
+ *
+ * The fields are meaningless apart, and storing them separately is a live
+ * defect: a worker terminated between two awaits leaves an access token beside
+ * another token's expiry, believed valid long after it is not. Never write a
+ * component on its own — see `setCredentials`.
+ */
+export const credentials = storage.defineItem<Credentials | null>(
+  "local:credentials",
+  { defaultValue: null }
+);
 
-/** Unix timestamp (ms) when the current access token expires. */
-export const atExpiry = storage.defineItem<number>("local:atExpiry", {
-  defaultValue: 0,
-});
+/**
+ * The ONLY way to write credentials.
+ *
+ * Every field goes in one `setValue`, so a worker terminated mid-write leaves
+ * either the whole previous tuple or the whole new one — never an access token
+ * beside another token's expiry. Call sites that update one field read, spread
+ * and write the whole value.
+ */
+export async function setCredentials(next: Credentials): Promise<void> {
+  await credentials.setValue(next);
+}
 
-/** Unique device fingerprint (UUID v4) generated on first registration. Identifies this browser instance. */
+/** Clear credentials as one value. Used by disconnect. */
+export async function clearCredentials(): Promise<void> {
+  await credentials.setValue(null);
+}
+
+/**
+ * Confirmation code to display while enrolment is pending.
+ *
+ * The administrator matches it against the pending row before activating. It is
+ * returned once, at enrolment, and never appears in any listing.
+ */
+export const confirmationCode = storage.defineItem<string>(
+  "local:confirmationCode",
+  { defaultValue: "" }
+);
+
+/**
+ * ADVISORY metadata only. Sent for diagnostics.
+ *
+ * It is not unique server-side, never identifies this device and never
+ * authorises anything. It used to be both identity and proof of ownership,
+ * which is what allowed any registration-token holder who learned a fingerprint
+ * to take over the device it named.
+ */
 export const fingerprint = storage.defineItem<string>("local:fingerprint", {
   defaultValue: "",
 });
@@ -65,12 +111,29 @@ export const userEmail = storage.defineItem<string>("local:userEmail", {
 });
 
 /**
- * Current device registration lifecycle state.
- * @see DeviceStatus in lib/types.ts
+ * Current lifecycle state of this installation.
+ *
+ * Typed rather than free text: every failure used to collapse into one `error`
+ * string, and `disabled` in particular must be distinguishable because it is
+ * terminal — the server has said stop, and a client that re-enrols there undoes
+ * its own revocation.
  */
-export const deviceStatus = storage.defineItem<string>("local:deviceStatus", {
-  defaultValue: "disconnected",
+export const deviceState = storage.defineItem<DeviceState>("local:deviceState", {
+  defaultValue: "unregistered",
 });
+
+/**
+ * Bumped by disconnect BEFORE it clears anything.
+ *
+ * An enrol or refresh already in flight captures this when it starts and
+ * verifies it is unchanged before committing. Without it a request that started
+ * before a disconnect can land afterwards and write the old device back as
+ * active — silently reconnecting an extension the user disconnected.
+ */
+export const sessionGeneration = storage.defineItem<number>(
+  "local:sessionGeneration",
+  { defaultValue: 0 }
+);
 
 // ── Site mode overrides ─────���──────────────────────────────��─────────────────
 

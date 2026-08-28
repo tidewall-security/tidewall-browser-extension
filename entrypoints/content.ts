@@ -31,7 +31,7 @@
 import { getAllUrlPatterns, SITE_REGISTRY } from "../lib/constants";
 import { sendMessage } from "../lib/messaging";
 import { getHandler } from "../handlers/index";
-import { siteModes, deviceStatus } from "../lib/storage";
+import { siteModes, deviceState } from "../lib/storage";
 import type { SiteMode, PromptScanResult } from "../lib/types";
 import { decideRequest, planExtraction } from "../lib/decide";
 
@@ -81,8 +81,12 @@ export default defineContentScript({
 
     // ── Determine mode ──────────────────────────────────────────────────────
 
-    const status = await deviceStatus.getValue();
-    if (status !== "connected" && status !== "registered") {
+    const status = await deviceState.getValue();
+    // ONLY "active". A pending, disabled or unregistered device holds no usable
+    // credential, so guarding would fail on every call -- and the states are an
+    // enum now, so a stale spelling here silently disables the guard for every
+    // site rather than failing anywhere visible.
+    if (status !== "active") {
       console.log("[Tidewall] Device not connected, skipping", siteName);
       return;
     }

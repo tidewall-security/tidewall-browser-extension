@@ -35,7 +35,7 @@
 import { onMessage } from "../lib/messaging";
 import * as api from "../lib/api";
 import * as store from "../lib/storage";
-import type { GuardRequest, GuardMessage, SiteMode } from "../lib/types";
+import type { DeviceState, GuardRequest, GuardMessage, SiteMode } from "../lib/types";
 
 // ── Badge helper ──────────────────────────────────────────────────────────────
 
@@ -63,42 +63,119 @@ function updateBadge(color: keyof typeof BADGE_COLORS): void {
 
 // ── Token refresh ─────────────────────────────────────────────────────────────
 
+/** Alarm name, used by both the scheduler and disconnect. */
+const REFRESH_ALARM = "token-refresh";
+
 /**
- * Refresh the short-lived access token by calling `/v1/devices/check`.
+ * Schedule the next refresh from the token's own expiry.
  *
- * Uses the stored refresh token and device fingerprint to obtain a new
- * access token. If the device has been deactivated server-side, sets
- * status to "pending" and updates the badge to yellow.
+ * Not a fixed 60-minute period. The access token lives 3600s, so a 60-minute
+ * period fired exactly at expiry: no margin, and no second attempt if the first
+ * failed. With a thirty-day refresh credential there is nothing to gain by
+ * cutting it fine.
  *
- * Called both on a 60-minute alarm and on-demand when a guard call returns 401.
+ * Alarms can be delayed and can vanish across a restart or an update, so this
+ * is called on every worker start as well as after every successful refresh. A
+ * worker that slept through its slot gets a minimum delay and refreshes almost
+ * immediately on waking.
+ */
+function scheduleRefresh(expiryMs: number): void {
+  const halfLifeMs = (expiryMs - Date.now()) / 2;
+  const delayMinutes = Math.max(1, Math.floor(halfLifeMs / 60_000));
+  browser.alarms.create(REFRESH_ALARM, { delayInMinutes: delayMinutes });
+}
+
+/** In-flight refresh, shared by every caller. See {@link refreshToken}. */
+let inFlightRefresh: Promise<void> | null = null;
+
+/**
+ * Move to a terminal or transitional state and reflect it in the badge.
+ *
+ * Every refresh outcome ends here. Previously an unrecognised one fell through
+ * the `if`s and did nothing at all — silently, with the badge still green.
+ */
+async function applyState(state: DeviceState): Promise<void> {
+  await store.deviceState.setValue(state);
+  updateBadge(
+    state === "active" ? "green" : state === "pending" ? "yellow" : "gray"
+  );
+}
+
+/**
+ * Renew the access token, at most once at a time.
+ *
+ * Two callers exist — a guard call that saw 401, and the alarm — and concurrent
+ * guard 401s each used to call this independently. They now await one shared
+ * promise. The `finally` matters: without it a single failure would leave a
+ * rejected promise cached and wedge refresh for the life of the worker.
  */
 async function refreshToken(): Promise<void> {
-  const fp = (await store.fingerprint.getValue()) ?? "";
-  const name = (await store.userName.getValue()) ?? "";
-  const email = (await store.userEmail.getValue()) ?? "";
-  const devName = (await store.deviceName.getValue()) ?? "";
-
-  const resp = await api.deviceCheck({
-    fingerprint: fp,
-    name,
-    email,
-    device_name: devName,
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = doRefresh().finally(() => {
+    inFlightRefresh = null;
   });
+  return inFlightRefresh;
+}
 
-  if (resp.status === "InactiveDevice") {
-    await store.deviceStatus.setValue("pending");
-    updateBadge("yellow");
+async function doRefresh(): Promise<void> {
+  const creds = await store.credentials.getValue();
+  if (!creds) {
+    await applyState("unregistered");
     return;
   }
 
-  if (resp.status === "Success" && resp.result) {
-    await store.atToken.setValue(resp.result.access_token.token);
-    await store.atExpiry.setValue(
-      Date.now() + resp.result.access_token.expires_in * 1000
-    );
-    if (resp.result.config?.sites) {
-      await store.siteModes.setValue(resp.result.config.sites);
-    }
+  // Captured BEFORE the request. Disconnect bumps this before clearing state,
+  // so a result that lands after a disconnect can be recognised and dropped
+  // rather than writing the old device back as active.
+  const generation = (await store.sessionGeneration.getValue()) ?? 0;
+
+  const outcome = await api.refreshDevice(creds.deviceId);
+
+  if (((await store.sessionGeneration.getValue()) ?? 0) !== generation) {
+    console.warn("[Tidewall] discarding a refresh that outlived its session");
+    return;
+  }
+
+  switch (outcome.kind) {
+    case "success":
+      await store.setCredentials({
+        ...creds,
+        accessToken: outcome.accessToken,
+        accessTokenExpiry: outcome.accessTokenExpiry,
+      });
+      if (outcome.config?.sites) await store.siteModes.setValue(outcome.config.sites);
+      await applyState("active");
+      return;
+
+    case "failure":
+      switch (outcome.reason) {
+        case "device_pending":
+          // Not an error. Approval is outstanding; keep the code on display.
+          await applyState("pending");
+          return;
+        case "device_revoked":
+          // TERMINAL. Re-enrolling here would undo the revocation, which is the
+          // whole reason the server refuses to answer anything else.
+          await applyState("disabled");
+          browser.alarms.clear(REFRESH_ALARM);
+          return;
+        case "credential_expired":
+        case "credential_unknown":
+          // The credential is gone; this installation must start over.
+          await applyState("unregistered");
+          return;
+      }
+      return;
+
+    case "rate_limited":
+      // Deliberately no state change: nothing is wrong with this device, and
+      // demoting it would make a burst look like a revocation.
+      console.warn("[Tidewall] refresh rate limited; backing off");
+      return;
+
+    case "transport_failure":
+      console.warn("[Tidewall] refresh transport failure:", outcome.detail);
+      return;
   }
 }
 
@@ -291,7 +368,8 @@ export default defineBackground(() => {
       scanCount: (await store.scanCount.getValue()) ?? 0,
       blockCount: (await store.blockCount.getValue()) ?? 0,
       transformCount: (await store.transformCount.getValue()) ?? 0,
-      deviceStatus: (await store.deviceStatus.getValue()) ?? "disconnected",
+      deviceStatus: (await store.deviceState.getValue()) ?? "unregistered",
+      confirmationCode: (await store.confirmationCode.getValue()) ?? "",
       policyName: (await store.policyName.getValue()) ?? "",
       recentActivity: (await store.recentActivity.getValue()) ?? [],
     };
@@ -307,14 +385,28 @@ export default defineBackground(() => {
       await store.userEmail.setValue(data.userEmail);
       await store.deviceName.setValue(data.deviceName);
 
-      // Generate fingerprint if not set
+      // Advisory only. Kept for diagnostics; it identifies nothing and
+      // authorises nothing, which is the whole point of the change that
+      // separated enrolment from refresh.
       let fp = (await store.fingerprint.getValue()) ?? "";
       if (!fp) {
         fp = crypto.randomUUID();
         await store.fingerprint.setValue(fp);
       }
 
-      const resp = await api.deviceCheck({
+      // The device's identity. Generated once with a CSPRNG and persisted
+      // BEFORE enrolling: the server validates the form and cannot tell whether
+      // the value was random, and enrolment is first-claim and never reassigns.
+      // Anyone holding a registration token who can predict this can enrol it
+      // first and lock the genuine client out.
+      let installationId = (await store.credentials.getValue())?.installationId ?? "";
+      if (!installationId) installationId = crypto.randomUUID();
+
+      // Captured before the request; disconnect bumps it before clearing state.
+      const generation = (await store.sessionGeneration.getValue()) ?? 0;
+
+      const resp = await api.enrolDevice({
+        installation_id: installationId,
         fingerprint: fp,
         user_name: data.userName,
         user_email: data.userEmail,
@@ -324,32 +416,35 @@ export default defineBackground(() => {
         extension_version: "1.0.0",
       });
 
-      if (resp.status === "InactiveDevice") {
-        await store.deviceStatus.setValue("pending");
-        updateBadge("yellow");
-        return { success: true };
+      if (generation !== ((await store.sessionGeneration.getValue()) ?? 0)) {
+        console.warn("[Tidewall] discarding an enrolment that outlived its session");
+        return { success: false };
       }
 
-      if (resp.status === "Success" && resp.result) {
-        await store.atToken.setValue(resp.result.access_token.token);
-        await store.atExpiry.setValue(
-          Date.now() + resp.result.access_token.expires_in * 1000
-        );
-        if (resp.result.config?.sites) {
-          await store.siteModes.setValue(resp.result.config.sites);
-        }
-        await store.deviceStatus.setValue("connected");
-        updateBadge("green");
+      if (resp.kind !== "success") {
+        const detail =
+          resp.kind === "failure"
+            ? resp.reason
+            : resp.kind === "rate_limited"
+              ? "rate limited"
+              : resp.detail;
+        console.error("[Tidewall] enrolment refused:", detail);
+        await applyState("unregistered");
+        return { success: false };
       }
 
-      // Set up token refresh alarm — every 60 minutes
-      browser.alarms.create("token-refresh", { periodInMinutes: 60 });
+      await store.setCredentials(resp.credentials);
+      await store.confirmationCode.setValue(resp.confirmationCode ?? "");
+      if (resp.config?.sites) await store.siteModes.setValue(resp.config.sites);
+      await applyState(resp.deviceStatus === "active" ? "active" : "pending");
+
+      scheduleRefresh(resp.credentials.accessTokenExpiry);
 
       return { success: true };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[Tidewall] register error:", msg);
-      await store.deviceStatus.setValue("error");
+      await applyState("unregistered");
       updateBadge("gray");
       return { success: false, error: msg };
     }
@@ -358,15 +453,22 @@ export default defineBackground(() => {
   // ── disconnect ──────────────────────────────────────────────────────────
 
   onMessage("disconnect", async () => {
-    await store.atToken.setValue("");
+    // FIRST, before anything is cleared. An enrol or refresh already in flight
+    // captured the old value and will discard its result rather than writing a
+    // disconnected device back as active.
+    await store.sessionGeneration.setValue(
+      ((await store.sessionGeneration.getValue()) ?? 0) + 1
+    );
+    await store.credentials.setValue(null);
+    await store.confirmationCode.setValue("");
     await store.rtToken.setValue("");
-    await store.deviceStatus.setValue("disconnected");
+    await store.deviceState.setValue("unregistered");
     await store.scanCount.setValue(0);
     await store.blockCount.setValue(0);
     await store.transformCount.setValue(0);
     await store.recentActivity.setValue([]);
     await store.policyName.setValue("");
-    browser.alarms.clear("token-refresh");
+    browser.alarms.clear(REFRESH_ALARM);
     updateBadge("gray");
   });
 

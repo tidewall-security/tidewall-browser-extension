@@ -23,21 +23,6 @@
  */
 export type SiteMode = "block" | "log" | "discover" | "disabled";
 
-/**
- * Device registration lifecycle state.
- *
- * - `"registered"` — device check succeeded (alias for connected in some flows)
- * - `"pending"` — device registered but awaiting admin approval
- * - `"connected"` — fully authenticated with valid access token
- * - `"disconnected"` — no registration or explicitly disconnected
- * - `"error"` — registration or authentication failed
- */
-export type DeviceStatus =
-  | "registered"
-  | "pending"
-  | "connected"
-  | "disconnected"
-  | "error";
 
 /**
  * Server-pushed site configuration mapping each site alias to its mode.
@@ -59,20 +44,111 @@ export interface AccessTokenResponse {
 }
 
 /**
- * Response from `POST /v1/devices/check`.
+ * Why a refresh was refused.
  *
- * On success, contains a fresh access token and optional site configuration.
- * On inactive device, result is null and the extension enters "pending" state.
+ * These four values are the complete set the server emits; success is HTTP 200
+ * with `status: "ok"` and **no** `reason` field. Modelling success as a fifth
+ * member would put a value in this union that the server never sends.
+ *
+ * Derived from `refresh_device` in the server's device service. A `switch` over
+ * this union must be exhaustive, so a value added server-side fails typecheck
+ * here rather than falling through to a default.
  */
-export interface DeviceCheckResponse {
-  /** `"Success"` when the device is active, `"InactiveDevice"` when pending admin approval. */
-  status: "Success" | "InactiveDevice";
-  /** Access token and config payload. Null when status is `"InactiveDevice"`. */
-  result: {
-    access_token: AccessTokenResponse;
-    config: SiteConfig;
-  } | null;
+export type RefreshFailureReason =
+  | "device_pending"
+  | "device_revoked"
+  | "credential_expired"
+  | "credential_unknown";
+
+/**
+ * Why an enrolment was refused.
+ *
+ * Every one of these arrives with `result: null`. Two of them answered HTTP 201
+ * until recently, which is why the client must decide on the BODY: a status code
+ * alone would have read "created" for an enrolment that created nothing, and the
+ * client would have stored an empty credential tuple with no error to show.
+ */
+export type EnrolFailureReason =
+  | "RegistrationTokenExhausted"
+  | "InstallationIdAlreadyEnrolled"
+  | "InstallationTombstoned"
+  | "PendingQuotaExceeded";
+
+/** Lifecycle state of this installation, as the extension sees it. */
+export type DeviceState =
+  | "unregistered"
+  | "pending"
+  | "active"
+  /** Terminal. The server said stop; only a manual resume leaves this. */
+  | "disabled";
+
+/**
+ * Credentials for one enrolled installation, written and read as ONE value.
+ *
+ * The three fields are meaningless apart. Storing them separately is what let a
+ * worker terminate between two awaits and leave an access token beside another
+ * token's expiry — believed valid long after it was not.
+ */
+export interface Credentials {
+  /** Client-generated, UUID form, non-nil. The server rejects anything else. */
+  installationId: string;
+  /** Server-assigned. Every refresh is addressed to this device's own path. */
+  deviceId: string;
+  /** `at_` — short-lived, used for guard calls. */
+  accessToken: string;
+  /** Unix ms at which `accessToken` expires. */
+  accessTokenExpiry: number;
+  /** `dr_` — long-lived, reaches only this device's refresh route, never rotates. */
+  refreshToken: string;
 }
+
+/** Successful enrolment. */
+export interface EnrolSuccess {
+  kind: "success";
+  credentials: Credentials;
+  deviceStatus: Extract<DeviceState, "pending" | "active">;
+  /** Present only while pending. Displayed for an administrator to match. */
+  confirmationCode?: string;
+  config?: SiteConfig;
+}
+
+/** A refused enrolment. Carries no credentials, whatever the HTTP status was. */
+export interface EnrolFailure {
+  kind: "failure";
+  reason: EnrolFailureReason;
+}
+
+/** The caller exceeded its allowance. Back off; do not hot-loop. */
+export interface RateLimited {
+  kind: "rate_limited";
+}
+
+/** The server could not be reached, or answered something unrecognised. */
+export interface TransportFailure {
+  kind: "transport_failure";
+  detail: string;
+}
+
+export type EnrolOutcome = EnrolSuccess | EnrolFailure | RateLimited | TransportFailure;
+
+/** A refresh that produced a new access token. Never a new refresh token. */
+export interface RefreshSuccess {
+  kind: "success";
+  accessToken: string;
+  accessTokenExpiry: number;
+  config?: SiteConfig;
+}
+
+export interface RefreshFailure {
+  kind: "failure";
+  reason: RefreshFailureReason;
+}
+
+export type RefreshOutcome =
+  | RefreshSuccess
+  | RefreshFailure
+  | RateLimited
+  | TransportFailure;
 
 /**
  * A single message in the guard API's chat format.
