@@ -1,0 +1,101 @@
+name: Nightly contract
+
+# The mirror of the server's per-PR contract job, in the other direction.
+#
+# The server runs this on every PR because it already has the Python
+# dependencies installed and because a break there is its fault. Here it is
+# nightly: this direction pays the server's install -- seven heavy ML packages
+# -- on a workflow that otherwise finishes in seconds, and client-side drift is
+# both rarer and this repository's own to catch.
+#
+# What it catches that nothing else does: an extension change that breaks the
+# client's HTTP layer. The server's job checks out this repository's `main`, so
+# it cannot see a change still on a branch here.
+
+on:
+  schedule:
+    # 03:00 UTC. Far enough from the working day that a red result is waiting
+    # rather than interrupting.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  contract:
+    name: Contract (this extension against a real server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: extension
+      - uses: actions/checkout@v4
+        with:
+          repository: tidewall-security/tidewall-server
+          path: server
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-py3.12-${{ hashFiles('server/uv.lock') }}
+          restore-keys: uv-${{ runner.os }}-py3.12-
+
+      - name: Install server
+        working-directory: server
+        run: uv sync --group dev
+
+      - name: Install and build extension
+        working-directory: extension
+        run: |
+          npm ci
+          npm run build
+
+      - name: Start the server
+        working-directory: server
+        env:
+          DB_URL: sqlite:////tmp/contract.db
+          BOOTSTRAP_KEY: ak_ci_contract_bootstrap_key_00000001
+          # No detector is invoked by these tests; loading the models would add
+          # minutes to prove nothing.
+          PREWARM: "false"
+        run: |
+          uv run uvicorn app.main:app --port 8099 > /tmp/server.log 2>&1 &
+          for i in $(seq 1 90); do
+            curl -sf http://localhost:8099/health > /dev/null && break
+            if [ "$i" = "90" ]; then echo "server did not start"; cat /tmp/server.log; exit 1; fi
+            sleep 1
+          done
+
+      - name: Seed a policy and a registration token
+        working-directory: server
+        env:
+          TIDEWALL_ADMIN_KEY: ak_ci_contract_bootstrap_key_00000001
+        run: uv run python ../extension/tests/integration/seed.py
+
+      - name: Client HTTP layer against the running server
+        working-directory: extension
+        env:
+          TIDEWALL_INTEGRATION: "1"
+          TIDEWALL_ADMIN_KEY: ak_ci_contract_bootstrap_key_00000001
+        run: npx vitest run tests/integration/live-server.test.ts
+
+      - name: The extension itself, in a real browser
+        working-directory: extension
+        env:
+          TIDEWALL_INTEGRATION: "1"
+          TIDEWALL_ADMIN_KEY: ak_ci_contract_bootstrap_key_00000001
+        run: |
+          npx playwright install chromium --with-deps
+          xvfb-run --auto-servernum npx playwright test tests/e2e/live-enrolment.spec.ts
+
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/server.log
