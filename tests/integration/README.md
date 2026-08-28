@@ -38,6 +38,16 @@ TIDEWALL_INTEGRATION=1 npx vitest run tests/integration/live-server.test.ts
 Mutation-tested — a trailing slash on the refresh URL, sending `at_` where `dr_`
 is required, and dropping the `Bearer` prefix each turn it red.
 
-**Does not prove:** anything about the extension *in a browser*. Storage, the
-background worker and the alarms are not exercised here; this imports
-`lib/api.ts` into node. That half is issue #3.
+**Does not prove:** anything about the extension *in a browser*. This imports
+`lib/api.ts` into node.
+
+That half is covered by `tests/e2e/live-enrolment.spec.ts`, which drives the real
+popup form in a real Chromium and lets the MV3 service worker make the request.
+Run it the same way:
+
+```bash
+TIDEWALL_INTEGRATION=1 npx playwright test tests/e2e/live-enrolment.spec.ts
+```
+
+What remains for issue #3 is **automating** these in CI, not whether they can be
+written.
