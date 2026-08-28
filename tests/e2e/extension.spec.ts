@@ -47,12 +47,12 @@ test.afterAll(async () => {
 const fetchIsPatched = (page: import("@playwright/test").Page) =>
   page.evaluate(() => !window.fetch.toString().includes("native code"));
 
-async function setDeviceStatus(status: string | null) {
+async function setDeviceState(status: string | null) {
   // WXT's `local:` prefix selects the storage AREA; the stored key is what
   // follows it.
   await serviceWorker.evaluate(async (value) => {
-    if (value === null) await chrome.storage.local.remove("deviceStatus");
-    else await chrome.storage.local.set({ deviceStatus: value });
+    if (value === null) await chrome.storage.local.remove("deviceState");
+    else await chrome.storage.local.set({ deviceState: value });
   }, status);
 }
 
@@ -76,7 +76,7 @@ test("the popup renders without a page error", async () => {
 test("the capture script is NOT injected when the device is not connected", async () => {
   // The fail-safe direction: no guard configured means no interception, not
   // interception that silently passes everything.
-  await setDeviceStatus(null);
+  await setDeviceState(null);
   const page = await context.newPage();
   await page.route("https://chatgpt.com/**", (r) =>
     r.fulfill({ status: 200, contentType: "text/html", body: FIXTURE_HTML }));
@@ -89,7 +89,7 @@ test("the capture script is NOT injected when the device is not connected", asyn
 });
 
 test("the capture script injects into the page world and patches fetch", async () => {
-  await setDeviceStatus("connected");
+  await setDeviceState("active");
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -107,7 +107,7 @@ test("the page world is told which site and mode it is guarding", async () => {
   // Inspection happens in the page world now, so it builds its own handler
   // from this. Without it the script loads and guards nothing — which would
   // look exactly like a working extension.
-  await setDeviceStatus("connected");
+  await setDeviceState("active");
   const page = await context.newPage();
   await page.route("https://chatgpt.com/**", (r) =>
     r.fulfill({ status: 200, contentType: "text/html", body: FIXTURE_HTML }));
