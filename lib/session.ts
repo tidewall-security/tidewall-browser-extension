@@ -122,13 +122,31 @@ async function doRefresh(effects: SessionEffects): Promise<void> {
       }
       return;
 
+    // These two cases cannot be independently killed by mutation, and that is
+    // stated rather than left looking covered: the switch has no default, so
+    // deleting either gives identical runtime behaviour. They are here to say
+    // the no-op is deliberate. What IS tested is the consequence -- that the
+    // device state survives both untouched, because demoting on either would
+    // make a burst or an unreachable server look like a revocation.
     case "rate_limited":
-      // Deliberately no state change: nothing is wrong with this device, and
-      // demoting it would make a burst look like a revocation.
       return;
 
     case "transport_failure":
-      // Likewise. An unreachable server is not a revoked device.
       return;
   }
+}
+
+/**
+ * May the content script guard this page?
+ *
+ * ONLY when the device is active. Pending, disabled and unregistered devices
+ * hold no usable credential, so every guard call would fail.
+ *
+ * Extracted and named because the inline version compared against two strings
+ * that no longer exist. Renaming the state item would have made that condition
+ * always true and silently stopped the extension guarding anything, on every
+ * site — with nothing failing anywhere, and no typecheck in CI to catch it.
+ */
+export function shouldGuard(state: DeviceState | null | undefined): boolean {
+  return state === "active";
 }

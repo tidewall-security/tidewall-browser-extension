@@ -50,7 +50,7 @@ vi.mock("../../lib/api", () => ({ refreshDevice: vi.fn() }));
 
 import * as api from "../../lib/api";
 import * as store from "../../lib/storage";
-import { refreshToken, resetInFlight } from "../../lib/session";
+import { refreshToken, resetInFlight, shouldGuard } from "../../lib/session";
 
 function effects() {
   return {
@@ -174,6 +174,23 @@ describe("device_revoked is terminal", () => {
       // A burst or an unreachable server is not a revoked device, and demoting
       // it here would make one look like the other.
       expect(state.deviceState).toBe("active");
+    }
+  );
+});
+
+describe("shouldGuard", () => {
+  it("guards only an active device", () => {
+    expect(shouldGuard("active")).toBe(true);
+  });
+
+  it.each(["pending", "disabled", "unregistered", null, undefined] as const)(
+    "does not guard when the state is %s",
+    (state) => {
+      // Each of these holds no usable credential, so guarding would fail on
+      // every call. The inline version of this compared against two strings
+      // that no longer exist, which would have made the condition always true
+      // and stopped the extension guarding anything at all.
+      expect(shouldGuard(state)).toBe(false);
     }
   );
 });
