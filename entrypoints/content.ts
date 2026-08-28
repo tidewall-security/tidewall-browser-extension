@@ -31,7 +31,8 @@
 import { getAllUrlPatterns, SITE_REGISTRY } from "../lib/constants";
 import { sendMessage } from "../lib/messaging";
 import { getHandler } from "../handlers/index";
-import { siteModes, deviceStatus } from "../lib/storage";
+import { siteModes, deviceState } from "../lib/storage";
+import { shouldGuard } from "../lib/session";
 import type { SiteMode, PromptScanResult } from "../lib/types";
 import { decideRequest, planExtraction } from "../lib/decide";
 
@@ -81,8 +82,8 @@ export default defineContentScript({
 
     // ── Determine mode ──────────────────────────────────────────────────────
 
-    const status = await deviceStatus.getValue();
-    if (status !== "connected" && status !== "registered") {
+    const status = await deviceState.getValue();
+    if (!shouldGuard(status)) {
       console.log("[Tidewall] Device not connected, skipping", siteName);
       return;
     }

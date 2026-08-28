@@ -15,7 +15,7 @@
  */
 
 import { sendMessage } from "../../lib/messaging";
-import { deviceStatus, userName, userEmail, deviceName, fingerprint, serverUrl } from "../../lib/storage";
+import { deviceState, confirmationCode, userName, userEmail, deviceName, fingerprint, serverUrl } from "../../lib/storage";
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
@@ -73,11 +73,43 @@ async function showPending(): Promise<void> {
   const device = (await deviceName.getValue()) ?? "";
   const fp = (await fingerprint.getValue()) ?? "";
 
+  // The confirmation code is why this screen exists. An administrator matches
+  // it against the pending row before activating, and it is the one field on
+  // that row a claimant could not have supplied -- every other value here was
+  // typed in by whoever is enrolling.
+  const code = (await confirmationCode.getValue()) ?? "";
+
   pendingInfo.innerHTML = [
+    code
+      ? `<strong>Confirmation code:</strong> <code class="confirmation-code">${escapeHtml(code)}</code>`
+      : "",
     `<strong>Name:</strong> ${escapeHtml(name)}`,
     `<strong>Email:</strong> ${escapeHtml(email)}`,
     `<strong>Device:</strong> ${escapeHtml(device)}`,
     `<strong>Fingerprint:</strong> ${escapeHtml(fp.slice(0, 8))}...`,
+  ]
+    .filter(Boolean)
+    .join("<br>");
+}
+
+/**
+ * The device was revoked. This state is terminal and does not resolve itself.
+ *
+ * The background worker has stopped polling, deliberately: a client that
+ * re-enrols after being told to stop undoes its own revocation. That also means
+ * an administrator re-enabling the device cannot reach this client, so the only
+ * way out is the user deciding to register again.
+ */
+async function showDisabled(): Promise<void> {
+  hideAll();
+  statePending.style.display = "block";
+  statusSubtitle.textContent = "Disabled";
+  logo.classList.add("gray");
+
+  pendingInfo.innerHTML = [
+    "<strong>This device has been disabled by an administrator.</strong>",
+    "It has stopped contacting the server and will not resume on its own.",
+    "If you believe this is wrong, ask an administrator, then register again.",
   ].join("<br>");
 }
 
@@ -219,17 +251,23 @@ function formatTime(ts: number): string {
  * Called once on popup open and again after successful registration.
  */
 async function init(): Promise<void> {
-  const status = (await deviceStatus.getValue()) ?? "disconnected";
+  const status = (await deviceState.getValue()) ?? "unregistered";
 
   switch (status) {
-    case "connected":
-    case "registered":
+    case "active":
       await showConnected();
       break;
     case "pending":
       await showPending();
       break;
-    default:
+    case "disabled":
+      // Terminal. The server revoked this device and the background worker has
+      // stopped polling, so nothing will move this state on its own -- an
+      // administrator re-enabling the device cannot reach a client that has
+      // correctly stopped. The user has to act.
+      await showDisabled();
+      break;
+    case "unregistered":
       showRegister();
       break;
   }
