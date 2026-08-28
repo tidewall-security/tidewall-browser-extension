@@ -35,6 +35,7 @@
 import { onMessage } from "../lib/messaging";
 import * as api from "../lib/api";
 import * as store from "../lib/storage";
+import * as session from "../lib/session";
 import type { DeviceState, GuardRequest, GuardMessage, SiteMode } from "../lib/types";
 
 // ── Badge helper ──────────────────────────────────────────────────────────────
@@ -63,121 +64,17 @@ function updateBadge(color: keyof typeof BADGE_COLORS): void {
 
 // ── Token refresh ─────────────────────────────────────────────────────────────
 
-/** Alarm name, used by both the scheduler and disconnect. */
-const REFRESH_ALARM = "token-refresh";
+/** Browser-facing side effects for the session module. */
+const effects: session.SessionEffects = {
+  setBadge: updateBadge,
+  clearAlarm: (name) => browser.alarms.clear(name),
+  createAlarm: (name, opts) => browser.alarms.create(name, opts),
+};
 
-/**
- * Schedule the next refresh from the token's own expiry.
- *
- * Not a fixed 60-minute period. The access token lives 3600s, so a 60-minute
- * period fired exactly at expiry: no margin, and no second attempt if the first
- * failed. With a thirty-day refresh credential there is nothing to gain by
- * cutting it fine.
- *
- * Alarms can be delayed and can vanish across a restart or an update, so this
- * is called on every worker start as well as after every successful refresh. A
- * worker that slept through its slot gets a minimum delay and refreshes almost
- * immediately on waking.
- */
-function scheduleRefresh(expiryMs: number): void {
-  const halfLifeMs = (expiryMs - Date.now()) / 2;
-  const delayMinutes = Math.max(1, Math.floor(halfLifeMs / 60_000));
-  browser.alarms.create(REFRESH_ALARM, { delayInMinutes: delayMinutes });
-}
-
-/** In-flight refresh, shared by every caller. See {@link refreshToken}. */
-let inFlightRefresh: Promise<void> | null = null;
-
-/**
- * Move to a terminal or transitional state and reflect it in the badge.
- *
- * Every refresh outcome ends here. Previously an unrecognised one fell through
- * the `if`s and did nothing at all — silently, with the badge still green.
- */
-async function applyState(state: DeviceState): Promise<void> {
-  await store.deviceState.setValue(state);
-  updateBadge(
-    state === "active" ? "green" : state === "pending" ? "yellow" : "gray"
-  );
-}
-
-/**
- * Renew the access token, at most once at a time.
- *
- * Two callers exist — a guard call that saw 401, and the alarm — and concurrent
- * guard 401s each used to call this independently. They now await one shared
- * promise. The `finally` matters: without it a single failure would leave a
- * rejected promise cached and wedge refresh for the life of the worker.
- */
-async function refreshToken(): Promise<void> {
-  if (inFlightRefresh) return inFlightRefresh;
-  inFlightRefresh = doRefresh().finally(() => {
-    inFlightRefresh = null;
-  });
-  return inFlightRefresh;
-}
-
-async function doRefresh(): Promise<void> {
-  const creds = await store.credentials.getValue();
-  if (!creds) {
-    await applyState("unregistered");
-    return;
-  }
-
-  // Captured BEFORE the request. Disconnect bumps this before clearing state,
-  // so a result that lands after a disconnect can be recognised and dropped
-  // rather than writing the old device back as active.
-  const generation = (await store.sessionGeneration.getValue()) ?? 0;
-
-  const outcome = await api.refreshDevice(creds.deviceId);
-
-  if (((await store.sessionGeneration.getValue()) ?? 0) !== generation) {
-    console.warn("[Tidewall] discarding a refresh that outlived its session");
-    return;
-  }
-
-  switch (outcome.kind) {
-    case "success":
-      await store.setCredentials({
-        ...creds,
-        accessToken: outcome.accessToken,
-        accessTokenExpiry: outcome.accessTokenExpiry,
-      });
-      if (outcome.config?.sites) await store.siteModes.setValue(outcome.config.sites);
-      await applyState("active");
-      return;
-
-    case "failure":
-      switch (outcome.reason) {
-        case "device_pending":
-          // Not an error. Approval is outstanding; keep the code on display.
-          await applyState("pending");
-          return;
-        case "device_revoked":
-          // TERMINAL. Re-enrolling here would undo the revocation, which is the
-          // whole reason the server refuses to answer anything else.
-          await applyState("disabled");
-          browser.alarms.clear(REFRESH_ALARM);
-          return;
-        case "credential_expired":
-        case "credential_unknown":
-          // The credential is gone; this installation must start over.
-          await applyState("unregistered");
-          return;
-      }
-      return;
-
-    case "rate_limited":
-      // Deliberately no state change: nothing is wrong with this device, and
-      // demoting it would make a burst look like a revocation.
-      console.warn("[Tidewall] refresh rate limited; backing off");
-      return;
-
-    case "transport_failure":
-      console.warn("[Tidewall] refresh transport failure:", outcome.detail);
-      return;
-  }
-}
+const REFRESH_ALARM = session.REFRESH_ALARM;
+const applyState = (state: DeviceState) => session.applyState(state, effects);
+const scheduleRefresh = (expiryMs: number) => session.scheduleRefresh(expiryMs, effects);
+const refreshToken = () => session.refreshToken(effects);
 
 // ── Background entry ──────────────────────────────────────────────────────────
 
