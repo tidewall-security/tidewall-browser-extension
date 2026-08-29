@@ -97,26 +97,38 @@ interface RegisterResult {
  * `[RequestData, ResponseData]`. This enables full type safety for
  * both `sendMessage` (caller) and `onMessage` (handler).
  */
+/**
+ * The message contract, in METHOD syntax.
+ *
+ * Not `name: [Request, Response]`. The library resolves each entry by shape: a
+ * function contributes its argument and its return type, a `ProtocolWithReturn`
+ * contributes both, and **anything else contributes itself as the request and
+ * `void` as the response**. A tuple is "anything else", so writing one is not a
+ * type error -- it silently types every handler's `data` as the whole tuple and
+ * every response as `void`, which is how this file came to promise checking it
+ * was not performing.
+ */
 interface ProtocolMap {
   /** Content --> Background: scan an outgoing prompt against the guard policy. */
-  guardPrompt: [GuardPromptData, PromptScanResult];
+  guardPrompt(data: GuardPromptData): PromptScanResult;
 
   /** Content --> Background: fire-and-forget AI output text for output scanning. */
-  guardOutput: [GuardOutputData, void];
+  guardOutput(data: GuardOutputData): void;
 
   /** Content --> Background: discovery-mode site visit tracking. */
-  trackSite: [TrackSiteData, void];
+  trackSite(data: TrackSiteData): void;
+
   /** A redaction was applied AND verified. Accounting follows the act. */
-  redactionApplied: [{ site: string }, void];
+  redactionApplied(data: { site: string }): void;
 
   /** Popup --> Background: retrieve current scan/block/transform stats. */
-  getStatus: [void, StatusResult];
+  getStatus(): StatusResult;
 
   /** Popup --> Background: register device with the Tidewall server. */
-  register: [RegisterData, RegisterResult];
+  register(data: RegisterData): RegisterResult;
 
   /** Popup --> Background: clear all state and disconnect the device. */
-  disconnect: [void, void];
+  disconnect(): void;
 }
 
 /**

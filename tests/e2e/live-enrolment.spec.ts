@@ -14,6 +14,7 @@ import { test, expect, chromium, type BrowserContext, type Worker } from "@playw
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Credentials } from "../../lib/types";
 
 const ENABLED = process.env.TIDEWALL_INTEGRATION === "1";
 const BASE = process.env.TIDEWALL_SERVER ?? "http://localhost:8099";
@@ -67,10 +68,11 @@ test("the extension enrols against a real server and displays its code", async (
       { timeout: 15_000 }
     )
     .toMatchObject({ deviceState: "pending" })
-    .then(() =>
-      serviceWorker.evaluate(async () =>
-        chrome.storage.local.get(["credentials", "confirmationCode"])
-      )
+    .then(
+      () =>
+        serviceWorker.evaluate(async () =>
+          chrome.storage.local.get(["credentials", "confirmationCode"])
+        ) as Promise<{ credentials: Credentials; confirmationCode: string }>
     );
 
   expect(stored.credentials.deviceId).toBeTruthy();

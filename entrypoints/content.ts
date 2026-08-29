@@ -164,7 +164,10 @@ export default defineContentScript({
               site: alias,
               model: meta?.modelName ?? "",
               modelVersion: meta?.modelVersion ?? "",
-              url: window.location.href,
+              // No `url`. The background destructures four fields and never
+              // read this one, and the guard API has no URL field to carry it,
+              // so sending the page address only made it look as though the
+              // server saw it.
             });
             respond({ result });
             return;
