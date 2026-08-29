@@ -18,10 +18,12 @@
  * - `getStatus` — returns current stats for the popup UI.
  *
  * **Token lifecycle:**
- * The extension uses two tokens: a refresh token (`rt_` prefix, long-lived)
- * stored from registration, and an access token (`at_` prefix, short-lived)
- * obtained via `/v1/devices/check`. The access token is refreshed every 60
- * minutes by an alarm, and on-demand when a 401 response is received.
+ * Three credentials, each reaching exactly one place. An `rt_` registration
+ * token is accepted at enrolment and nowhere else. Enrolment returns a `dr_`
+ * device refresh token, which reaches only this device's own refresh route and
+ * never rotates, and an `at_` access token, which is short-lived and is what
+ * guard calls carry. The access token is renewed from the `dr_` token on an
+ * alarm and on demand after a 401.
  *
  * **Badge states:**
  * - Gray: disconnected / error
