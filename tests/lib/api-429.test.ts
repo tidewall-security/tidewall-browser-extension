@@ -73,6 +73,21 @@ describe("the two 429s are told apart", () => {
     expect(await enrolDevice(BODY)).toEqual({ kind: "rate_limited" });
   });
 
+  it("an unrecognised 429 outcome on enrol is reported, not swallowed", async () => {
+    // The gap a mutation found. With the body parsed first, ENROL_FAILURES
+    // catches the four listed reasons regardless of what the 429 condition
+    // says -- so nothing was pinning the condition itself. This is the case
+    // that needs it: a status the client has never heard of, on a 429.
+    // Reporting it as "rate limited" would invite the same forever-retry the
+    // quota bug caused, for an outcome nobody has even named yet.
+    answer(429, { status: "SomethingNobodyMapped", reason: "SomethingNobodyMapped", result: null });
+
+    const out = await enrolDevice(BODY);
+    expect(out.kind).toBe("transport_failure");
+    if (out.kind !== "transport_failure") throw new Error("unreachable");
+    expect(out.detail).toContain("SomethingNobodyMapped");
+  });
+
   it("refresh keeps the same order, though nothing maps to 429 there yet", async () => {
     answer(429, { detail: "Too many requests" });
     expect(await refreshDevice("d")).toEqual({ kind: "rate_limited" });
