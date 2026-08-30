@@ -55,6 +55,17 @@ test("the extension enrols against a real server and displays its code", async (
   await popup.fill("#input-name", "Integration");
   await popup.fill("#input-email", "integration@example.com");
   await popup.fill("#input-device", "Playwright");
+
+  // The demo server is plain http on loopback, which the form now refuses
+  // unless this is ticked. Driving the checkbox rather than pointing the test
+  // at an https server is deliberate: this IS the developer's path, and it is
+  // the one that must keep working. It also means the test fails if the
+  // checkbox is ever removed or defaulted to on -- either would change what a
+  // person is agreeing to.
+  if (BASE.startsWith("http://")) {
+    await popup.check("#input-allow-insecure");
+  }
+
   await popup.click("#register-form button[type=submit]");
 
   // The service worker wrote a credential tuple, so a real request succeeded.
