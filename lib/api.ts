@@ -30,7 +30,7 @@ import type {
 import { serverUrl, rtToken, credentials } from "./storage";
 
 /** Refusals the server can return from enrolment. Every one has `result: null`. */
-const ENROL_FAILURES: readonly EnrolFailureReason[] = [
+export const ENROL_FAILURES: readonly EnrolFailureReason[] = [
   "RegistrationTokenExhausted",
   "InstallationIdAlreadyEnrolled",
   "InstallationTombstoned",
@@ -38,7 +38,7 @@ const ENROL_FAILURES: readonly EnrolFailureReason[] = [
 ];
 
 /** Refusals the server can return from refresh. Success carries no reason. */
-const REFRESH_FAILURES: readonly RefreshFailureReason[] = [
+export const REFRESH_FAILURES: readonly RefreshFailureReason[] = [
   "device_pending",
   "device_revoked",
   "credential_expired",
