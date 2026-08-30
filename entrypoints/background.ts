@@ -37,6 +37,7 @@
 import { onMessage } from "../lib/messaging";
 import * as api from "../lib/api";
 import * as store from "../lib/storage";
+import { checkServerUrl } from "../lib/server-url";
 import * as session from "../lib/session";
 import type { DeviceState, GuardRequest, GuardMessage, SiteMode } from "../lib/types";
 
@@ -278,6 +279,16 @@ export default defineBackground(() => {
 
   onMessage("register", async ({ data }) => {
     try {
+      // Checked HERE, not only in the popup. This worker holds the credential
+      // and makes the request, so this is the boundary that matters; the
+      // popup's copy exists to give a person a reason they can act on, not to
+      // be relied upon. A message handler must not trust its sender's checks.
+      const verdict = checkServerUrl(data.serverUrl, data.allowInsecureLoopback);
+      if (!verdict.ok) {
+        console.error("[Tidewall] refusing to register against", data.serverUrl, "--", verdict.reason);
+        return { success: false, error: verdict.reason };
+      }
+
       await store.serverUrl.setValue(data.serverUrl);
       await store.rtToken.setValue(data.rtToken);
       await store.userName.setValue(data.userName);

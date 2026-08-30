@@ -70,6 +70,15 @@ interface StatusResult {
 interface RegisterData {
   /** Base URL of the Tidewall server (e.g., "https://tidewall.example.com"). */
   serverUrl: string;
+  /**
+   * Whether the person ticked "allow an insecure local server".
+   *
+   * Travels with the URL rather than being read from storage by the worker,
+   * because it is a property of THIS registration decision. Storing it as a
+   * standing preference would let a later registration inherit an exemption
+   * nobody granted for it.
+   */
+  allowInsecureLoopback: boolean;
   /** Long-lived refresh token from the admin console. */
   rtToken: string;
   /** Human-readable device name for the admin console. */

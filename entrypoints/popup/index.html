@@ -23,7 +23,19 @@
       <form id="register-form">
         <div class="form-group">
           <label for="input-server">Server URL</label>
-          <input type="text" id="input-server" placeholder="https://tidewall.example.com" required>
+          <input type="url" id="input-server" placeholder="https://tidewall.example.com" required>
+        </div>
+        <!-- Off by default. Plain http does not authenticate the server, so a
+             local process that binds the port first receives this device's
+             credential and every prompt. Ticking this is an informed decision;
+             it is not the same as being trained to click through a browser
+             certificate warning, which is what a self-signed demo cert would
+             teach instead. -->
+        <div class="form-group">
+          <label for="input-allow-insecure">
+            <input type="checkbox" id="input-allow-insecure">
+            Allow an insecure local server (development)
+          </label>
         </div>
         <div class="form-group">
           <label for="input-token">Registration Token</label>

@@ -87,6 +87,14 @@ export async function enrolDevice(body: {
   try {
     resp = await fetch(`${base}/v1/devices/enrol`, {
       method: "POST",
+      // Never follow one. `fetch` defaults to `follow`, and the
+      // Authorization header is re-sent to whatever location the server
+      // names -- so a compromised or misconfigured server URL forwards this
+      // credential, and the prompt, to a third party. The Python agent has
+      // refused redirects since it was written; this client did not.
+      //
+      // Unaffected by any scheme rule: an https server can redirect too.
+      redirect: "error",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
@@ -179,6 +187,7 @@ export async function refreshDevice(deviceId: string): Promise<RefreshOutcome> {
   try {
     resp = await fetch(`${base}/v1/devices/${encodeURIComponent(deviceId)}/refresh`, {
       method: "POST",
+      redirect: "error",  // see enrolDevice: a redirect re-sends the credential
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
@@ -244,6 +253,7 @@ export async function guardChat(body: GuardRequest): Promise<GuardResponse> {
 
   const resp = await fetch(`${base}/v1/guard_chat_completions`, {
     method: "POST",
+    redirect: "error",  // see enrolDevice: a redirect re-sends the credential
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
