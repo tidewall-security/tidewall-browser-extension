@@ -15,6 +15,7 @@
  */
 
 import { sendMessage } from "../../lib/messaging";
+import { checkServerUrl } from "../../lib/server-url";
 import { deviceState, confirmationCode, userName, userEmail, deviceName, fingerprint, serverUrl } from "../../lib/storage";
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -28,6 +29,7 @@ const errorDisplay = document.getElementById("error-display")!;
 
 const form = document.getElementById("register-form") as HTMLFormElement;
 const inputServer = document.getElementById("input-server") as HTMLInputElement;
+const inputAllowInsecure = document.getElementById("input-allow-insecure") as HTMLInputElement;
 const inputToken = document.getElementById("input-token") as HTMLInputElement;
 const inputName = document.getElementById("input-name") as HTMLInputElement;
 const inputEmail = document.getElementById("input-email") as HTMLInputElement;
@@ -168,6 +170,17 @@ form.addEventListener("submit", async (e) => {
   e.preventDefault();
   errorDisplay.style.display = "none";
 
+  // Refuse BEFORE anything is stored or sent. The background worker checks
+  // this again -- it is the one that actually holds the credential, and the
+  // popup is not a trust boundary -- but stopping here is what lets the person
+  // see WHY and correct the URL, instead of reading a failure afterwards.
+  const verdict = checkServerUrl(inputServer.value.trim(), inputAllowInsecure.checked);
+  if (!verdict.ok) {
+    errorDisplay.textContent = verdict.reason;
+    errorDisplay.style.display = "block";
+    return;
+  }
+
   const btn = form.querySelector("button[type=submit]") as HTMLButtonElement;
   btn.disabled = true;
   btn.textContent = "Registering...";
@@ -175,6 +188,7 @@ form.addEventListener("submit", async (e) => {
   try {
     const result = await sendMessage("register", {
       serverUrl: inputServer.value.trim(),
+      allowInsecureLoopback: inputAllowInsecure.checked,
       rtToken: inputToken.value.trim(),
       userName: inputName.value.trim(),
       userEmail: inputEmail.value.trim(),
