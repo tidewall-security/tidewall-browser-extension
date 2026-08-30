@@ -97,12 +97,23 @@ export async function enrolDevice(body: {
     return { kind: "transport_failure", detail: String(err) };
   }
 
-  if (resp.status === 429) return { kind: "rate_limited" };
-
+  // 429 carries two different things, and deciding on the code alone made
+  // `PendingQuotaExceeded` -- listed in ENROL_FAILURES above -- unreachable.
+  // The enrolment rate limiter answers `{"detail": "Too many requests"}` with
+  // no `status`; the pending quota answers 429 WITH one. They are only
+  // distinguishable by the body, so the body is read first.
+  //
+  // The difference is not cosmetic. "Rate limited" tells the user to wait,
+  // and waiting clears a rate limit. Nothing the user does clears a full
+  // pending quota -- an administrator has to approve devices -- so the retry
+  // it invites can never succeed.
   let payload: Record<string, unknown>;
   try {
     payload = (await resp.json()) as Record<string, unknown>;
   } catch (err) {
+    // A 429 from an intermediary -- proxy, WAF, load balancer -- need not be
+    // JSON at all, and that one really is nothing but rate limiting.
+    if (resp.status === 429) return { kind: "rate_limited" };
     return { kind: "transport_failure", detail: `unparseable body: ${String(err)}` };
   }
 
@@ -111,6 +122,15 @@ export async function enrolDevice(body: {
   if (ENROL_FAILURES.includes(status as EnrolFailureReason)) {
     return { kind: "failure", reason: status as EnrolFailureReason };
   }
+
+  // The discriminator is whether the body carries an application status AT
+  // ALL, not whether we recognise it. The limiter answers `{"detail": ...}`
+  // and no route outcome does, so a 429 with a `status` is an outcome by
+  // construction. An UNRECOGNISED one falls through to the unrecognised-
+  // outcome path below and is reported loudly -- which is the point: matching
+  // only the reasons already listed would fix `PendingQuotaExceeded` and leave
+  // the next 429 outcome swallowed exactly as that one was.
+  if (resp.status === 429 && status === undefined) return { kind: "rate_limited" };
 
   const result = payload.result as Record<string, any> | null | undefined;
   if (status !== "Success" || !result) {
@@ -169,12 +189,15 @@ export async function refreshDevice(deviceId: string): Promise<RefreshOutcome> {
     return { kind: "transport_failure", detail: String(err) };
   }
 
-  if (resp.status === 429) return { kind: "rate_limited" };
-
+  // Same order as enrolment, though no refresh outcome maps to 429 today.
+  // That is precisely the condition under which this bug arrives: the server
+  // grows one, the code-first check swallows it, and the reason the client
+  // already knows how to handle never reaches the branch that handles it.
   let payload: Record<string, unknown>;
   try {
     payload = (await resp.json()) as Record<string, unknown>;
   } catch (err) {
+    if (resp.status === 429) return { kind: "rate_limited" };
     return { kind: "transport_failure", detail: `unparseable body: ${String(err)}` };
   }
 
@@ -182,6 +205,8 @@ export async function refreshDevice(deviceId: string): Promise<RefreshOutcome> {
   if (reason && REFRESH_FAILURES.includes(reason as RefreshFailureReason)) {
     return { kind: "failure", reason: reason as RefreshFailureReason };
   }
+
+  if (resp.status === 429 && payload.status === undefined) return { kind: "rate_limited" };
 
   const result = payload.result as Record<string, any> | null | undefined;
   if (payload.status !== "ok" || !result) {
