@@ -107,6 +107,41 @@ run("the client against a live server (real fetch)", () => {
     });
   });
 
+  /**
+   * A server guarantee the client depends on, asserted with raw fetch because
+   * the client would never make this call. `refreshDevice` sends the `dr_`;
+   * the point here is that an `at_` presented to the same route is refused, so
+   * a leaked access token cannot mint fresh ones indefinitely.
+   *
+   * Uses its own installation so it does not depend on where it sits relative
+   * to the revocation below, which is terminal for the shared device.
+   */
+  it("refuses an at_ credential on the refresh route", async () => {
+    const fresh = await enrolDevice({
+      installation_id: crypto.randomUUID(),
+      device_name: "at-on-refresh",
+      user_name: "j",
+      user_email: "j@example.com",
+      browser: "Chrome",
+      os: "macOS",
+      extension_version: "1.0.0",
+    });
+    if (fresh.kind !== "success") throw new Error(JSON.stringify(fresh));
+
+    const resp = await fetch(`${BASE}/v1/devices/${fresh.credentials.deviceId}/refresh`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fresh.credentials.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+
+    // Pinning the code, not just the refusal: without it a later change could
+    // turn this into a 500 and still look like it passes.
+    expect(resp.status).toBe(401);
+  });
+
   it("reads InstallationTombstoned from a real re-enrolment", async () => {
     const out = await enrolDevice({
       installation_id: iid,
@@ -120,4 +155,19 @@ run("the client against a live server (real fetch)", () => {
 
     expect(out).toEqual({ kind: "failure", reason: "InstallationTombstoned" });
   });
+
+  /**
+   * PendingQuotaExceeded is NOT driven here, deliberately.
+   *
+   * The quota is 50 per registration token and the enrolment rate limiter
+   * allows 10 a minute, so reaching it over real HTTP takes five minutes --
+   * and the first attempt to write it here did not fail, it silently measured
+   * the rate limiter instead, because the client collapsed both 429s into
+   * `rate_limited`. That conflation is now fixed and pinned in
+   * tests/lib/api-429.test.ts, where the response can be constructed directly
+   * rather than waited for.
+   *
+   * A slow job could drive it end to end. That is the remaining half of
+   * issue #3, and it is a genuine one -- but it is not this file.
+   */
 });
