@@ -160,7 +160,9 @@ export default defineContentScript({
               meta: { application: string; modelName: string; modelVersion: string };
             };
             const result = await sendMessage("guardPrompt", {
-              text: prompts.join("\n"),
+              // NOT joined. See GuardPromptData: joining made every
+              // multi-prompt request fail the cardinality check downstream.
+              prompts,
               site: alias,
               model: meta?.modelName ?? "",
               modelVersion: meta?.modelVersion ?? "",

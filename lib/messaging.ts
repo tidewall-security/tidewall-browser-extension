@@ -22,8 +22,17 @@ import type { PromptScanResult } from "./types";
 
 /** Request payload for the `guardPrompt` message (content --> background). */
 interface GuardPromptData {
-  /** The user's prompt text (multiple prompts joined with `---` separator). */
-  text: string;
+  /**
+   * Every prompt the handler extracted, in extraction order.
+   *
+   * A `string[]`, not a joined string. The content script used to send
+   * `prompts.join("\n")`, the background wrapped that in ONE guard message,
+   * and `PageGuard.prove` requires one replacement per extracted prompt -- so
+   * any handler returning two prompts was refused for cardinality and blocked,
+   * every time. Order is load-bearing: replacement `i` is written back to the
+   * part that produced prompt `i`.
+   */
+  prompts: string[];
   /** Site alias identifying the AI application. */
   site: string;
   /** Optional user identifier override. */

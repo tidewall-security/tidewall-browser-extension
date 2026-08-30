@@ -37,6 +37,7 @@
 import { onMessage } from "../lib/messaging";
 import * as api from "../lib/api";
 import * as store from "../lib/storage";
+import { buildGuardMessages } from "../lib/guard-request";
 import { checkServerUrl } from "../lib/server-url";
 import * as session from "../lib/session";
 import type { DeviceState, GuardRequest, GuardMessage, SiteMode } from "../lib/types";
@@ -90,13 +91,13 @@ export default defineBackground(() => {
   // ── guardPrompt ─────────────────────────────────────────────────────────
 
   onMessage("guardPrompt", async ({ data }) => {
-    const { text, site, model, modelVersion } = data;
+    const { prompts, site, model, modelVersion } = data;
 
     const fp = (await store.fingerprint.getValue()) ?? "";
     const email = (await store.userEmail.getValue()) ?? "";
     const name = (await store.userName.getValue()) ?? "";
 
-    const messages: GuardMessage[] = [{ role: "user", content: text }];
+    const messages: GuardMessage[] = buildGuardMessages(prompts);
 
     const guardReq: GuardRequest = {
       guard_input: { messages },
