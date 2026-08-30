@@ -1,6 +1,17 @@
 import { SiteHandler, extractText } from "./base";
 import type { SiteMode } from "../lib/types";
 
+/** A part the guard can actually read: a non-empty string. */
+function isTextPart(part: unknown): part is string {
+  return typeof part === "string" && part.length > 0;
+}
+
+/** Every readable text part of the first message, in order. */
+function textParts(data: { messages?: Array<{ content?: { parts?: unknown[] } }> }): string[] {
+  const parts = data?.messages?.[0]?.content?.parts;
+  return Array.isArray(parts) ? parts.filter(isTextPart) : [];
+}
+
 /**
  * Handler for ChatGPT (chatgpt.com).
  *
@@ -40,17 +51,35 @@ export class ChatGPTHandler extends SiteHandler {
       }
       this.modelName = this.modelVersion;
     }
-    // Extract user prompt text from ChatGPT's message format
-    if (data?.messages?.length > 0 && data.messages[0].content?.parts) {
-      const prompt = data.messages[0].content.parts[0];
-      if (prompt) return [prompt];
-    }
-    return [];
+    // EVERY text part, not `parts[0]`.
+    //
+    // `parts` is an array and a prompt can mix text with attachment
+    // references. Reading only element zero meant a message whose first part
+    // was an attachment returned that OBJECT as the prompt -- the guard was
+    // handed `{asset_pointer: ...}` where a string was expected, and the
+    // user's actual text, sitting at index 1, was never inspected at all.
+    //
+    // Non-string parts are skipped rather than stringified: they are
+    // references to content this adapter cannot read, and feeding their JSON
+    // to the guard would scan a URL rather than a prompt while reporting that
+    // the prompt had been scanned.
+    return textParts(data);
   }
 
   override promptHttpOutput(body: unknown, redacted: string[]): unknown {
     const data = JSON.parse(body as string);
-    data.messages[0].content.parts = [redacted[0]];
+    const parts = data?.messages?.[0]?.content?.parts;
+    if (!Array.isArray(parts)) return JSON.stringify(data);
+
+    // Same predicate as the extractor, walked in the same order, so
+    // `redacted[i]` lands on the part that produced prompt `i`. The previous
+    // version replaced the WHOLE array with `[redacted[0]]`, which discarded
+    // every attachment reference in the message along with any text after the
+    // first.
+    let next = 0;
+    data.messages[0].content.parts = parts.map((part: unknown) =>
+      isTextPart(part) ? redacted[next++] : part,
+    );
     return JSON.stringify(data);
   }
 
