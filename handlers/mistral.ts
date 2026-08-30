@@ -21,9 +21,15 @@ import type { SiteMode } from "../lib/types";
  */
 type Entry = { type?: string; text?: unknown };
 
-/** An entry the guard can read: typed text, with a non-empty string in it. */
+/**
+ * An entry the guard can read: typed text, holding a string.
+ *
+ * Emptiness is deliberately not part of it -- see `isTextPart` in the ChatGPT
+ * handler for why. A redaction that empties an entry must still round-trip
+ * through `PageGuard.prove`.
+ */
 function isTextEntry(e: Entry): boolean {
-  return e?.type === "text" && typeof e.text === "string" && e.text.length > 0;
+  return e?.type === "text" && typeof e.text === "string";
 }
 
 function textEntries(list: Entry[]): string[] {
@@ -58,13 +64,25 @@ export class MistralHandler extends SiteHandler {
     // Requiring `[0].type === "text"` meant a message whose first entry was an
     // image failed the branch entirely, fell through, and returned nothing --
     // so the user's text, sitting at index 1, went to Mistral unguarded.
+    // FALL THROUGH when an array yields nothing. Returning early on merely
+    // HAVING the array was a regression I introduced: `{mode: "start",
+    // messageInput: []}` stopped reaching the `q` branch below, so a prompt in
+    // the query string went to Mistral unguarded. The original branches
+    // required text at index 0 and so fell through by accident; this falls
+    // through on purpose.
     if (Array.isArray(data?.messageInput)) {
-      this.newChat = false;
-      return textEntries(data.messageInput);
+      const texts = textEntries(data.messageInput);
+      if (texts.length) {
+        this.newChat = false;
+        return texts;
+      }
     }
     if (Array.isArray(data?.[0]?.json?.content)) {
-      this.newChat = true;
-      return textEntries(data[0].json.content);
+      const texts = textEntries(data[0].json.content);
+      if (texts.length) {
+        this.newChat = true;
+        return texts;
+      }
     }
     if (data?.mode === "start") {
       this.newChat = true;

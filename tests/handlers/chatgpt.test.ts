@@ -114,3 +114,15 @@ describe("a prompt that mixes text with attachment references", () => {
     expect(h.promptHttpInput(bodyWith([asset]))).toEqual([]);
   });
 });
+
+describe("a redaction that empties a part still round-trips", () => {
+  it("survives the proof PageGuard performs", () => {
+    const h = new ChatGPTHandler("chatgpt", "block");
+    const asset = { asset_pointer: "file-service://photo" };
+    const body = JSON.stringify({
+      messages: [{ content: { parts: ["delete me", asset, "keep"] } }],
+    });
+    const redacted = ["", "keep"];
+    expect(h.promptHttpInput(h.promptHttpOutput(body, redacted))).toEqual(redacted);
+  });
+});

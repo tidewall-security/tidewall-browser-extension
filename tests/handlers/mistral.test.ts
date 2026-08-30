@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { MistralHandler } from "../../handlers/mistral";
 
 describe("MistralHandler", () => {
@@ -107,6 +107,70 @@ describe("a prompt that mixes text with images", () => {
       messageInput: [{ type: "text", text: "one" }, image, { type: "text", text: "two" }],
     });
     const redacted = ["ONE", "TWO"];
+    expect(h.promptHttpInput(h.promptHttpOutput(body, redacted))).toEqual(redacted);
+  });
+});
+
+describe("start mode still reachable behind an array", () => {
+  // A regression introduced while fixing the zero-index leak and caught in
+  // review: returning early on merely HAVING `messageInput` meant
+  // `{mode: "start", messageInput: []}` no longer reached the `q` branch, so a
+  // prompt in the query string went to Mistral unguarded.
+  // The handler reads `window.location.search`, and there is no window in the
+  // node environment these tests run in.
+  const withQuery = (q: string, fn: () => void) => {
+    vi.stubGlobal("window", { location: { search: `?q=${encodeURIComponent(q)}` } });
+    try {
+      fn();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it("an EMPTY messageInput does not shadow the query string", () => {
+    withQuery("my ssn is 078-05-1120", () => {
+      const h = new MistralHandler("mistral", "block");
+      const body = JSON.stringify({ mode: "start", messageInput: [] });
+      expect(h.promptHttpInput(body)).toEqual(["my ssn is 078-05-1120"]);
+    });
+  });
+
+  it("an image-only messageInput does not shadow it either", () => {
+    withQuery("my ssn is 078-05-1120", () => {
+      const h = new MistralHandler("mistral", "block");
+      const body = JSON.stringify({
+        mode: "start",
+        messageInput: [{ type: "image", url: "https://uploaded/asset" }],
+      });
+      expect(h.promptHttpInput(body)).toEqual(["my ssn is 078-05-1120"]);
+    });
+  });
+
+  it("an empty tRPC content array does not shadow it", () => {
+    withQuery("secret", () => {
+      const h = new MistralHandler("mistral", "block");
+      const body = JSON.stringify([{ json: { content: [] } }]);
+      // No `mode`, so nothing to fall through TO -- but it must not claim a
+      // prompt it does not have either.
+      expect(h.promptHttpInput(body)).toEqual([]);
+    });
+  });
+});
+
+describe("a redaction that empties an entry still round-trips", () => {
+  // `PageGuard.prove` re-extracts from the rewritten body. If the predicate
+  // excluded empty strings, emptying an entry would come back one short and a
+  // legitimate rewrite would be refused as unproven.
+  it("survives the proof", () => {
+    const h = new MistralHandler("mistral", "block");
+    const body = JSON.stringify({
+      messageInput: [
+        { type: "text", text: "delete me" },
+        { type: "image", url: "https://uploaded/asset" },
+        { type: "text", text: "keep" },
+      ],
+    });
+    const redacted = ["", "keep"];
     expect(h.promptHttpInput(h.promptHttpOutput(body, redacted))).toEqual(redacted);
   });
 });

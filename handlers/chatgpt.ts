@@ -1,9 +1,31 @@
 import { SiteHandler, extractText } from "./base";
 import type { SiteMode } from "../lib/types";
 
-/** A part the guard can actually read: a non-empty string. */
+/**
+ * A part the guard can read: a string.
+ *
+ * Emptiness is deliberately NOT part of this. The predicate runs twice -- once
+ * to extract, once to write back -- and `PageGuard.prove` re-extracts from the
+ * rewritten body to check the rewrite landed. If a redaction replaced a part
+ * with "" and this excluded empty strings, the re-extraction would come back
+ * one short and a legitimate rewrite would be refused as unproven.
+ *
+ * The cost is that a message carrying an empty text part now reaches the guard
+ * with an empty prompt in it, which is noise rather than harm.
+ *
+ * KNOWN LIMIT, and it is not this handler's to fix: a message with more than
+ * one text part cannot currently be TRANSFORMED. The content script joins
+ * every extracted prompt into a single guard message, the guard returns one
+ * replacement, and `PageGuard.prove` requires as many replacements as prompts
+ * -- so the verdict is refused for cardinality and the request blocks.
+ *
+ * That is fail-closed and it is an improvement on what happened before, which
+ * was to redact `parts[0]` and replace the WHOLE array with it, silently
+ * deleting every attachment and any later text from the user's message. But
+ * multi-part redaction needs the pipeline to carry prompts separately.
+ */
 function isTextPart(part: unknown): part is string {
-  return typeof part === "string" && part.length > 0;
+  return typeof part === "string";
 }
 
 /** Every readable text part of the first message, in order. */
