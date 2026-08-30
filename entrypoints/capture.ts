@@ -28,6 +28,7 @@
  */
 
 import { PageGuard, requestParts } from "../lib/page-guard";
+import { BLOCKED_BODY, BLOCKED_STATUS, terminateBlockedXhr } from "../lib/blocked-request";
 import { getHandler } from "../handlers/index";
 import type { SiteMode, PromptScanResult } from "../lib/types";
 
@@ -148,7 +149,7 @@ export default defineUnlistedScript(() => {
     const verdict = await pageGuard.inspectHttp("fetch", url, method, body);
 
     if (verdict.action === "blocked") {
-      return new Response("Blocked by Tidewall", { status: 403, statusText: "Forbidden" });
+      return new Response(BLOCKED_BODY, { status: BLOCKED_STATUS, statusText: "Forbidden" });
     }
 
     // A VERIFIED body is sent even when it is falsy. The previous truthiness
@@ -233,8 +234,7 @@ export default defineUnlistedScript(() => {
           return;
         }
         if (response.action === "blocked") {
-          // Abort the XHR — don't send it
-          xhr.dispatchEvent(new Event("error"));
+          terminateBlockedXhr(xhr);
           return;
         }
         // Patch onreadystatechange to capture response
