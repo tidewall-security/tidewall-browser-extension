@@ -39,11 +39,18 @@ vi.mock("../../lib/storage", () => ({
 const SCHEMA_PATH = process.env.TIDEWALL_OPENAPI;
 const run = SCHEMA_PATH ? describe : describe.skip;
 
-run("the client's reasons are the server's reasons", () => {
-  const schema = JSON.parse(readFileSync(SCHEMA_PATH!, "utf8"));
-  const components = schema.components.schemas;
+// Read here, not inside the describe body: `describe.skip` still EVALUATES
+// its callback to collect the test names, so a bare readFileSync(undefined)
+// throws and the file fails to load on every ordinary run -- reported as a
+// failed test FILE with zero failed tests, which is easy to read past.
+const schema = SCHEMA_PATH ? JSON.parse(readFileSync(SCHEMA_PATH, "utf8")) : null;
 
+run("the client's reasons are the server's reasons", () => {
+  // Every dereference is INSIDE a test. `describe.skip` evaluates this
+  // callback to collect names, so anything touching `schema` out here runs on
+  // ordinary runs too, where it is null.
   function reasonsOf(model: string): string[] {
+    const components = schema.components.schemas;
     const reason = components[model].properties.reason;
     const target = reason.$ref ? components[reason.$ref.split("/").pop()!] : reason;
     const values = target.enum;
