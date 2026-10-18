@@ -52,3 +52,9 @@ The test creates its own registration token and removes its device and revokes
 the token afterwards. Desktop and mobile screenshots are written under
 `test-results/`. Stop the server with Ctrl-C when finished. The test is skipped
 unless `TIDEWALL_INTEGRATION=1`; it needs no AI-provider credentials.
+
+CI runs this check as **First run (real guard)** against a pinned compatible
+server revision. It requires one executed, passing test with no skips and
+uploads the screenshots, JSON report, and server log as
+`first-run-browser-results`. Server CI also runs the test against its current
+server code and a pinned extension revision.

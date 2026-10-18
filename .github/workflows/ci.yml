@@ -71,3 +71,94 @@ jobs:
           name: playwright-traces
           path: test-results/
           retention-days: 7
+
+  first-run:
+    name: First run (real guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: extension
+      - uses: actions/checkout@v4
+        with:
+          repository: tidewall-security/tidewall-server
+          # Known-compatible server baseline. Update deliberately when the
+          # cross-repository contract changes; this PR tests its own extension.
+          ref: fc9ac97d1bb56ddff749106aaca2bed88f3b7d8f
+          path: server
+      - uses: astral-sh/setup-uv@v5
+        with:
+          prune-cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.cache/huggingface/hub
+          key: first-run-${{ runner.os }}-${{ hashFiles('server/uv.lock', 'server/app/model_registry.py', 'server/policy.yaml') }}
+      - name: Install server
+        working-directory: server
+        run: uv sync --frozen
+      - name: Build extension and install Chromium
+        working-directory: extension
+        run: |
+          npm ci
+          npm run build
+          npx playwright install chromium --with-deps
+      - name: Start a clean server
+        working-directory: server
+        env:
+          DB_URL: sqlite:////tmp/first-run.db
+          BOOTSTRAP_KEY: ak_ci_first_run_bootstrap_key_00000001
+          HOST: "127.0.0.1"
+          PORT: "8099"
+        run: |
+          uv run --no-sync python -m app > /tmp/first-run-server.log 2>&1 &
+          echo $! > /tmp/first-run-server.pid
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8099/health > /dev/null && exit 0
+            kill -0 "$(cat /tmp/first-run-server.pid)" || break
+            sleep 1
+          done
+          echo "Server failed to start after attempt $i"
+          cat /tmp/first-run-server.log
+          exit 1
+      - name: Dashboard, approval, and enforcement in Chromium
+        working-directory: extension
+        env:
+          TIDEWALL_INTEGRATION: "1"
+          TIDEWALL_SERVER: http://127.0.0.1:8099
+          TIDEWALL_ADMIN_KEY: ak_ci_first_run_bootstrap_key_00000001
+          PLAYWRIGHT_JSON_OUTPUT_FILE: /tmp/first-run.json
+        run: |
+          npx playwright test tests/e2e/first-run.spec.ts --reporter=line,json
+          python - <<'PY'
+          import json
+          stats = json.load(open('/tmp/first-run.json'))['stats']
+          assert stats['expected'] == 1, stats
+          assert stats['skipped'] == stats['unexpected'] == stats['flaky'] == 0, stats
+          PY
+      - name: Retain screenshots and browser results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-run-browser-results
+          path: |
+            extension/test-results/
+            /tmp/first-run.json
+            /tmp/first-run-server.log
+          retention-days: 7
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/first-run-server.pid ]; then
+            kill "$(cat /tmp/first-run-server.pid)" 2>/dev/null || true
+          fi

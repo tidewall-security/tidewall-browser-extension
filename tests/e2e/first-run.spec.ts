@@ -9,7 +9,7 @@ const ADMIN = process.env.TIDEWALL_ADMIN_KEY ?? "ak_demo_bootstrap_key_000000000
 test.skip(process.env.TIDEWALL_INTEGRATION !== "1", "requires an isolated, running Tidewall server");
 
 test("first run: sign in, inspect prompts, enrol, approve, and enforce", async ({ request }, testInfo) => {
-  test.setTimeout(300_000); // The first guard call may load local detector models.
+  test.setTimeout(600_000); // CI may download detector models on the first call.
   const headers = { Authorization: `Bearer ${ADMIN}` };
   const context = await chromium.launchPersistentContext("", {
     channel: "chromium",
@@ -40,7 +40,7 @@ test("first run: sign in, inspect prompts, enrol, approve, and enforce", async (
     ]) {
       await page.goto(`${BASE}/ui/sandbox`);
       await page.getByRole("button", { name: label, exact: true }).click();
-      await expect(page.locator(".chat-system")).toContainText(status, { timeout: 180_000 });
+      await expect(page.locator(".chat-system")).toContainText(status, { timeout: 300_000 });
       await expect(page.locator(".chat-system .bubble-content")).toBeVisible();
       if (status === "TRANSFORMED") {
         await expect(page.locator(".transform-text.redacted")).not.toContainText("234-56-7890");
