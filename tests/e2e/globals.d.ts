@@ -15,6 +15,9 @@
  * something else, it should fail here first and be added deliberately.
  */
 declare const chrome: {
+  alarms: {
+    create(name: string, info: { when: number }): Promise<void>;
+  };
   storage: {
     local: {
       get(keys?: string | string[] | null): Promise<Record<string, unknown>>;
